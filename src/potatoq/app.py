@@ -99,8 +99,7 @@ class Potatoq:
         self._lock = threading.RLock()
         self._broker: Broker | None = None
         self._backend: Broker | bool | None = False  # False = not resolved yet
-        self._connection_provider: Callable[[Broker], Any] | None = None
-        self._on_commit_handlers: list[Callable[[Callable[[], None], Any], bool]] = []
+        self._transaction_hooks: list[Any] = []
         self._autodiscover: list[tuple[Any, str]] = []
         self._finalized = False
         self._pid = os.getpid()
@@ -398,16 +397,38 @@ class Potatoq:
             )
         return backend
 
-    def publish(self, messages: list[Message], connection: Any = None) -> None:
+    def publish(
+        self,
+        messages: list[Message],
+        connection: Any = None,
+        on_commit: bool | None = None,
+        using: Any = None,
+    ) -> None:
+        """Send messages to the broker.
+
+        Inside a database transaction (Django ``atomic()``, an SQLAlchemy session) the
+        messages are sent when it commits and dropped if it rolls back, so a worker never
+        sees a task before the data it needs. When the broker *is* that database, the
+        rows are written inside the transaction itself, which is the same behaviour
+        without the gap between COMMIT and publishing.
+        """
+        if not messages:
+            return
+        if on_commit is None:
+            on_commit = self.conf.task_enqueue_on_commit
+        if connection is None and on_commit:
+            for hook in self._transaction_hooks:
+                if hook.publish(self, messages, using):
+                    return
+        self.publish_now(messages, connection)
+
+    def publish_now(self, messages: list[Message], connection: Any = None) -> None:
         for message in messages:
             signals.before_task_publish.send(
                 sender=message.task, body=message.to_dict(), exchange="", routing_key=message.queue,
                 headers=message.headers, properties={}, declare=[], retry_policy=None,
             )  # fmt: skip
-        broker = self.broker
-        if connection is None and self._connection_provider is not None and broker.transactional:
-            connection = self._connection_provider(broker)
-        broker.enqueue(messages, connection=connection)
+        self.broker.enqueue(messages, connection=connection)
         for message in messages:
             signals.after_task_publish.send(
                 sender=message.task, body=message.to_dict(), exchange="", routing_key=message.queue
@@ -415,10 +436,14 @@ class Potatoq:
 
     def on_commit(self, fn: Callable[[], None], using: Any = None) -> None:
         """Run ``fn`` after the current transaction commits (or now, if there is none)."""
-        for handler in self._on_commit_handlers:
-            if handler(fn, using):
+        for hook in self._transaction_hooks:
+            if hook.on_commit(fn, using):
                 return
         fn()
+
+    def add_transaction_hook(self, hook: Any) -> None:
+        if not any(type(h) is type(hook) for h in self._transaction_hooks):
+            self._transaction_hooks.append(hook)
 
     def route_for(self, name: str) -> dict[str, Any]:
         routes = self.conf.task_routes

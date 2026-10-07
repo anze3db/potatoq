@@ -233,14 +233,9 @@ def execute(
 ) -> Outcome:
     """Run ``message`` and return what should happen next. Never raises."""
     start = time.monotonic()
-    try:
-        task: Task = app.tasks[message.task]
-    except NotRegistered as exc:
-        logger.error("Received unregistered task %r (id %s); dead-lettering it", message.task, message.id)
-        signals.task_unknown.send(sender=None, name=message.task, id=message.id, message=message, exc=exc)
-        return Outcome(DEAD_LETTER, states.FAILURE, exc=exc, reason=f"unregistered task {message.task}")
-
-    request = build_request(message, delivery_count, hostname, is_eager, task.resolved_time_limits(message.options))
+    task: Task | None = app.tasks.get(message.task)
+    limits = task.resolved_time_limits(message.options) if task is not None else (None, None)
+    request = build_request(message, delivery_count, hostname, is_eager, limits)
 
     if message.is_expired():
         logger.info("Task %s[%s] expired; discarding", message.task, message.id)
@@ -264,6 +259,12 @@ def execute(
         if previous.state == states.FAILURE and app.conf.task_dead_letter_failures:
             return Outcome(DEAD_LETTER, states.FAILURE, reason=previous.traceback or "failed before redelivery")
         return Outcome(COMPLETE, states.IGNORED, reason="already finished")
+
+    if task is None:
+        exc = NotRegistered(message.task)
+        logger.error("Received unregistered task %r (id %s); dead-lettering it", message.task, message.id)
+        signals.task_unknown.send(sender=None, name=message.task, id=message.id, message=message, exc=exc)
+        return Outcome(DEAD_LETTER, states.FAILURE, exc=exc, reason=f"unregistered task {message.task}")
 
     ignore_result = message.ignore_result
     store = backend is not None and not ignore_result

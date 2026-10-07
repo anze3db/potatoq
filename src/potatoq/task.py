@@ -135,6 +135,7 @@ class Task:
     retry_backoff_max: float | None = None
     retry_jitter: bool | None = None
     acks_late: bool | None = None
+    enqueue_on_commit: bool | None = None
     reject_on_worker_lost: bool | None = None
     ignore_result: bool | None = None
     store_errors_even_if_ignored: bool = False
@@ -157,7 +158,7 @@ class Task:
             "retry_jitter", "acks_late", "reject_on_worker_lost", "ignore_result",
             "store_errors_even_if_ignored", "track_started", "time_limit",
             "soft_time_limit", "rate_limit", "queue", "priority", "expires", "serializer",
-            "bind", "shared", "base", "lazy", "trail", "send_events", "routing_key",
+            "bind", "shared", "base", "lazy", "enqueue_on_commit", "trail", "send_events", "routing_key",
             "exchange", "pydantic", "throws", "resultrepr_maxsize", "acks_on_failure_or_timeout",
         }
     )  # fmt: skip
@@ -256,10 +257,14 @@ class Task:
             self._check_arguments(args, kwargs)
         if self.app.conf.task_always_eager or options.pop("always_eager", False):
             return self.apply(args, kwargs, task_id=task_id, link=link, link_error=link_error, **options)
+        connection = options.pop("connection", None)
+        using = options.pop("using", None)
+        on_commit = options.pop("enqueue_on_commit", None)
+        if on_commit is None:
+            on_commit = self.enqueue_on_commit
         message = self.build_message(args, kwargs, task_id, link=link, link_error=link_error, **options)
-        connection = options.get("connection")
-        self.app.publish([message], connection=connection)
-        return self.AsyncResult(message.id)
+        self.app.publish([message], connection=connection, on_commit=on_commit, using=using)
+        return self.AsyncResult(message.id, ignored=message.ignore_result)
 
     def build_message(
         self,
@@ -349,13 +354,16 @@ class Task:
             raise TypeError(f"{self.name}{sig}: {exc}") from None
 
     def delay_on_commit(self, *args: Any, **kwargs: Any) -> None:
-        """Enqueue when the current database transaction commits (Django / SQLAlchemy)."""
-        self.apply_async_on_commit(args, kwargs)
+        """Enqueue when the current database transaction commits (Celery 5.4 API).
 
-    def apply_async_on_commit(
-        self, args: Any = None, kwargs: dict[str, Any] | None = None, *, using: Any = None, **options: Any
-    ) -> None:
-        self.app.on_commit(lambda: self.apply_async(args, kwargs, **options), using=using)
+        With Potatoq this is what ``delay()`` already does by default inside a
+        transaction (``task_enqueue_on_commit``); this method forces it.
+        """
+        self.apply_async(args, kwargs, enqueue_on_commit=True)
+
+    def apply_async_on_commit(self, args: Any = None, kwargs: dict[str, Any] | None = None, **options: Any) -> None:
+        options["enqueue_on_commit"] = True
+        self.apply_async(args, kwargs, **options)
 
     async def adelay(self, *args: Any, **kwargs: Any) -> AsyncResult:
         """``delay`` for async code: the broker round trip runs in a thread."""
@@ -391,6 +399,8 @@ class Task:
             throw = self.app.conf.task_eager_propagates
         message = self.build_message(args, kwargs, task_id, link=link, link_error=link_error, **options)
         message.eta = None
+        # Round-trip through the serializer so eager tests see what a worker would.
+        message = Message.decode(message.encode())
         return execute_eagerly(self.app, message, throw=throw)
 
     def send(self, *args: Any, **kwargs: Any) -> AsyncResult:

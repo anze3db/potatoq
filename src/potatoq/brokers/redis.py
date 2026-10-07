@@ -464,7 +464,7 @@ class RedisBroker(Broker):
         for queue in self._queues():
             flat = self.run("reap", queue, limit)
             for i in range(0, len(flat), 3):
-                job_id, deliveries, payload = flat[i : i + 3]
+                _, deliveries, payload = flat[i : i + 3]
                 dead.append(Delivery(Message.decode(payload), delivery_count=int(deliveries), handle=None))
         # Forget workers that stopped heartbeating long ago.
         cutoff = time.time() - worker_dead_after - 3600

@@ -45,6 +45,9 @@ except ImportError as exc:  # pragma: no cover
     raise ImportError("RabbitMQ support requires pika: pip install 'potatoq[rabbitmq]'") from exc
 
 logger = logging.getLogger("potatoq.rabbitmq")
+if logging.getLogger("pika").level == logging.NOTSET:
+    # pika logs every failed address of a connection attempt (e.g. IPv6 ::1) at ERROR.
+    logging.getLogger("pika").setLevel(logging.CRITICAL)
 
 DELAY_LEVELS = 28
 DELAY_EXCHANGE = "potatoq.delay.L{:02d}"
@@ -103,6 +106,7 @@ class RabbitMQBroker(Broker):
         self._delay_ready = False
         self._leader: tuple[Any, Any] | None = None
         self._holding_token = False
+        self._fired: dict[tuple[str, float], None] = {}
         self.delivery_limit = int(options.get("delivery_limit", app.conf.task_max_deliveries))
 
     # --- connections -------------------------------------------------------------
@@ -304,6 +308,12 @@ class RabbitMQBroker(Broker):
     def enqueue_periodic(self, name: str, fire_at: float, message: Message) -> bool:
         if not self._leader_poll():
             return False
+        key = (name, fire_at)
+        if key in self._fired:
+            return False
+        self._fired[key] = None
+        while len(self._fired) > 10_000:
+            self._fired.pop(next(iter(self._fired)))
         self.enqueue([message])
         return True
 

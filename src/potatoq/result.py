@@ -34,6 +34,7 @@ class AsyncResult:
         task_name: str | None = None,
         app: Potatoq | None = None,
         parent: AsyncResult | None = None,
+        ignored: bool = False,
     ):
         if app is None:
             from .app import current_app
@@ -43,6 +44,7 @@ class AsyncResult:
         self.app = app
         self.task_name = task_name
         self.parent = parent
+        self.ignored = ignored
         self._cache: ResultRecord | None = None
 
     task_id = property(lambda self: self.id)
@@ -159,6 +161,13 @@ class AsyncResult:
     ) -> Any:
         if disable_sync_subtasks:
             _assert_will_not_block(self.app)
+        if self.ignored:
+            from .exceptions import ResultBackendDisabled
+
+            raise ResultBackendDisabled(
+                f"Task {self.task_name or self.id} ignores its result, so there is nothing to wait for. "
+                "Set ignore_result=False on the task or configure result_backend."
+            )
         if self._cache is None:
             record = self.app.require_backend().wait_for_result(self.id, timeout)
             if record is None or not record.ready:

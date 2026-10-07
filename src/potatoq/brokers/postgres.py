@@ -115,8 +115,7 @@ _LOCK_MAINTENANCE = 0x706F7462
 
 
 def _normalize_url(url: str) -> str:
-    scheme, rest = url.split("://", 1)
-    return "postgresql://" + rest
+    return "postgresql://" + url.split("://", 1)[1]
 
 
 def _channel(queue: str) -> str:
@@ -261,7 +260,7 @@ class PostgresBroker(Broker):
         if connection is not None:
             # Join the caller's transaction (psycopg 3 or psycopg2 DB-API connection).
             rows = self._rows(messages)
-            sql = self._insert_sql.as_string(self.conn)
+            sql = self._insert_sql.as_string(None)
             with connection.cursor() as cur:
                 cur.executemany(sql, rows)
                 if self.notify:

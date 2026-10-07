@@ -467,6 +467,9 @@ class SQLiteConsumer(Consumer):
         deadline = time.monotonic() + timeout
         sleep = 0.002
         self._interrupted = False
+        # data_version ignores this connection's own commits (our last ack), so always
+        # look once before sleeping on it.
+        self._data_version = None
         while True:
             version = conn.execute("PRAGMA data_version").fetchone()[0]
             if version != self._data_version:
