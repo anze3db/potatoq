@@ -119,7 +119,9 @@ class Supervisor:
         self.loglevel = loglevel
         self.logfile = logfile
         self.max_tasks_per_child = conf.worker_max_tasks_per_child if max_tasks_per_child == -1 else max_tasks_per_child
-        self.max_memory_kib = parse_memory(conf.worker_max_memory_per_child if max_memory_per_child == -1 else max_memory_per_child)
+        self.max_memory_kib = parse_memory(
+            conf.worker_max_memory_per_child if max_memory_per_child == -1 else max_memory_per_child
+        )
         self.scheduler_enabled = conf.worker_enable_scheduler if scheduler is None else scheduler
         self.shutdown_timeout = conf.worker_shutdown_timeout if shutdown_timeout is None else shutdown_timeout
         self.children: dict[int, ChildProc] = {}
@@ -304,7 +306,9 @@ class Supervisor:
         if self.consumer.can_settle_foreign:
             known = {d.message.id for d in lost}
             try:
-                lost += [d for d in self.app.broker.lost_deliveries(self.node_id, child.pid) if d.message.id not in known]
+                lost += [
+                    d for d in self.app.broker.lost_deliveries(self.node_id, child.pid) if d.message.id not in known
+                ]
             except Exception:
                 logger.exception("Could not look up tasks of dead child %d", child.pid)
         for delivery in lost:
@@ -325,7 +329,11 @@ class Supervisor:
         consumer = self.consumer
         if child.killed_for_timeout:
             hard = (time.time() - child.task_started) if child.task_started else None
-            exc: BaseException = TimeLimitExceeded(f"Task {message.task}[{message.id}] exceeded its time limit ({hard:.0f}s) and was killed" if hard else "time limit exceeded")
+            exc: BaseException = TimeLimitExceeded(
+                f"Task {message.task}[{message.id}] exceeded its time limit ({hard:.0f}s) and was killed"
+                if hard
+                else "time limit exceeded"
+            )
             logger.error("%s", exc)
             outcome = executor.failure_outcome(app, message, exc, self.hostname)
         elif self.shutting_down and child.abort_sent:
@@ -343,7 +351,9 @@ class Supervisor:
                 if consumer.can_settle_foreign:
                     consumer.requeue(delivery, count=True)
                 return
-            exc = WorkerLostError(f"Worker exited prematurely (code {code}) while running {message.task}[{message.id}], {delivery.delivery_count} time(s)")
+            exc = WorkerLostError(
+                f"Worker exited prematurely (code {code}) while running {message.task}[{message.id}], {delivery.delivery_count} time(s)"
+            )
             logger.error("%s; dead-lettering", exc)
             outcome = executor.failure_outcome(app, message, exc, self.hostname)
         if consumer.can_settle_foreign:
@@ -401,7 +411,9 @@ class Supervisor:
                 if now >= timers["recover"]:
                     timers["recover"] = now + random.uniform(5, 15)
                     for delivery in broker.recover(float(conf.worker_dead_after)):
-                        exc = WorkerLostError(f"Worker node died while running {delivery.message.task}[{delivery.message.id}] {delivery.delivery_count} time(s)")
+                        exc = WorkerLostError(
+                            f"Worker node died while running {delivery.message.task}[{delivery.message.id}] {delivery.delivery_count} time(s)"
+                        )
                         outcome = executor.failure_outcome(self.app, delivery.message, exc, self.hostname)
                         if outcome.record is not None and self.app.backend is not None:
                             self.app.backend.store_result(outcome.record, expires=conf.result_expires)

@@ -59,6 +59,10 @@ def setup_logging(app: Any, loglevel: str | int = "INFO", logfile: str | None = 
 
     if isinstance(loglevel, str):
         loglevel = logging.getLevelName(loglevel.upper())
+    # Client libraries are chatty at INFO (pika logs every connection step).
+    # pika logs every failed address of a connection attempt (e.g. IPv6 ::1) at ERROR;
+    # Potatoq reports connection problems itself.
+    logging.getLogger("pika").setLevel(max(logging.CRITICAL, loglevel))
     results = signals.setup_logging.send(sender=None, loglevel=loglevel, logfile=logfile, format=None, colorize=None)
     if any(r for _, r in results if r is not None) or signals.setup_logging.has_receivers():
         return
@@ -77,4 +81,6 @@ def setup_logging(app: Any, loglevel: str | int = "INFO", logfile: str | None = 
     handler.setFormatter(TaskFormatter(app.conf.worker_log_format, app.conf.worker_task_log_format))
     root.addHandler(handler)
     root.setLevel(loglevel)
-    signals.after_setup_logger.send(sender=None, logger=root, loglevel=loglevel, logfile=logfile, format=None, colorize=None)
+    signals.after_setup_logger.send(
+        sender=None, logger=root, loglevel=loglevel, logfile=logfile, format=None, colorize=None
+    )

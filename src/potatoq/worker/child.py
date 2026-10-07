@@ -138,7 +138,10 @@ class Child:
                     break
                 if self.max_memory_kib and _rss_kib() > self.max_memory_kib:
                     logger.warning(
-                        "Child %d recycling: memory %d KiB over limit %d KiB", os.getpid(), _rss_kib(), self.max_memory_kib
+                        "Child %d recycling: memory %d KiB over limit %d KiB",
+                        os.getpid(),
+                        _rss_kib(),
+                        self.max_memory_kib,
                     )
                     break
         finally:

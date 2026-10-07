@@ -203,7 +203,9 @@ class SQLiteBroker(Broker):
 
     def enqueue_periodic(self, name: str, fire_at: float, message: Message) -> bool:
         with self._write() as conn:
-            cur = conn.execute("INSERT INTO potatoq_periodic (name, fire_at) VALUES (?, ?) ON CONFLICT DO NOTHING", (name, fire_at))
+            cur = conn.execute(
+                "INSERT INTO potatoq_periodic (name, fire_at) VALUES (?, ?) ON CONFLICT DO NOTHING", (name, fire_at)
+            )
             if cur.rowcount == 0:
                 return False
             self._insert(conn, [message])
@@ -218,7 +220,12 @@ class SQLiteBroker(Broker):
         conn.execute(
             "INSERT INTO potatoq_results (id, state, payload, expires_at) VALUES (?, ?, ?, ?) "
             "ON CONFLICT (id) DO UPDATE SET state = excluded.state, payload = excluded.payload, expires_at = excluded.expires_at",
-            (record.task_id, record.state, serialization.dumps(record.to_dict()), time.time() + expires if expires else None),
+            (
+                record.task_id,
+                record.state,
+                serialization.dumps(record.to_dict()),
+                time.time() + expires if expires else None,
+            ),
         )
 
     def store_result(self, record: ResultRecord, expires: float | None) -> None:
@@ -290,7 +297,8 @@ class SQLiteBroker(Broker):
 
     def lost_deliveries(self, worker_id: str, pid: int) -> list[Delivery]:
         rows = self.conn.execute(
-            "SELECT id, deliveries, payload FROM potatoq_jobs WHERE state = 2 AND worker = ? AND pid = ?", (worker_id, pid)
+            "SELECT id, deliveries, payload FROM potatoq_jobs WHERE state = 2 AND worker = ? AND pid = ?",
+            (worker_id, pid),
         ).fetchall()
         return self._deliveries(rows)
 
@@ -326,11 +334,14 @@ class SQLiteBroker(Broker):
                 (group_id, size, now),
             )
             remaining = conn.execute(
-                "UPDATE potatoq_chords SET remaining = remaining - 1 WHERE group_id = ? RETURNING remaining", (group_id,)
+                "UPDATE potatoq_chords SET remaining = remaining - 1 WHERE group_id = ? RETURNING remaining",
+                (group_id,),
             ).fetchone()[0]
             if remaining > 0:
                 return None
-            rows = conn.execute("SELECT result FROM potatoq_chord_parts WHERE group_id = ? ORDER BY idx", (group_id,)).fetchall()
+            rows = conn.execute(
+                "SELECT result FROM potatoq_chord_parts WHERE group_id = ? ORDER BY idx", (group_id,)
+            ).fetchall()
             conn.execute("DELETE FROM potatoq_chord_parts WHERE group_id = ?", (group_id,))
             conn.execute("DELETE FROM potatoq_chords WHERE group_id = ?", (group_id,))
         return [serialization.loads(r[0]) for r in rows]
@@ -340,14 +351,20 @@ class SQLiteBroker(Broker):
         now = time.time()
         with self._write() as conn:
             for task_id in task_ids:
-                row = conn.execute("DELETE FROM potatoq_jobs WHERE id = ? AND state != 2 RETURNING task", (task_id,)).fetchone()
-                record = ResultRecord(task_id=task_id, state=states.REVOKED, date_done=now, task_name=row[0] if row else None)
+                row = conn.execute(
+                    "DELETE FROM potatoq_jobs WHERE id = ? AND state != 2 RETURNING task", (task_id,)
+                ).fetchone()
+                record = ResultRecord(
+                    task_id=task_id, state=states.REVOKED, date_done=now, task_name=row[0] if row else None
+                )
                 self._store(conn, record, self.app.conf.result_expires)
 
     # --- inspection --------------------------------------------------------------
 
     def queue_sizes(self) -> dict[str, int]:
-        rows = self.conn.execute("SELECT queue, count(*) FROM potatoq_jobs WHERE state IN (0, 1) GROUP BY queue").fetchall()
+        rows = self.conn.execute(
+            "SELECT queue, count(*) FROM potatoq_jobs WHERE state IN (0, 1) GROUP BY queue"
+        ).fetchall()
         return dict(rows)
 
     def purge(self, queue: str) -> int:
@@ -358,7 +375,17 @@ class SQLiteBroker(Broker):
         rows = self.conn.execute(
             "SELECT id, queue, task, reason, died_at, payload FROM potatoq_dead ORDER BY died_at DESC LIMIT ?", (limit,)
         ).fetchall()
-        return [{"id": r[0], "queue": r[1], "task": r[2], "reason": r[3], "died_at": r[4], "message": serialization.loads(r[5])} for r in rows]
+        return [
+            {
+                "id": r[0],
+                "queue": r[1],
+                "task": r[2],
+                "reason": r[3],
+                "died_at": r[4],
+                "message": serialization.loads(r[5]),
+            }
+            for r in rows
+        ]
 
     def requeue_dead(self, task_id: str) -> bool:
         with self._write() as conn:
@@ -405,7 +432,10 @@ class SQLiteConsumer(Consumer):
         for queue in self.queues:
             if conn.execute("SELECT 1 FROM potatoq_jobs WHERE state = 1 AND queue = ? LIMIT 1", (queue,)).fetchone():
                 return True
-        return conn.execute("SELECT 1 FROM potatoq_jobs WHERE state = 0 AND run_at <= ? LIMIT 1", (now,)).fetchone() is not None
+        return (
+            conn.execute("SELECT 1 FROM potatoq_jobs WHERE state = 0 AND run_at <= ? LIMIT 1", (now,)).fetchone()
+            is not None
+        )
 
     def _next_due(self, conn: sqlite3.Connection) -> float | None:
         row = conn.execute("SELECT min(run_at) FROM potatoq_jobs WHERE state = 0").fetchone()
@@ -496,7 +526,9 @@ class SQLiteConsumer(Consumer):
                 (0 if count else 1, job_id, deliveries),
             )
 
-    def dead_letter(self, delivery: Delivery, reason: str, record: ResultRecord | None, followups: list[Message] | None = None) -> None:
+    def dead_letter(
+        self, delivery: Delivery, reason: str, record: ResultRecord | None, followups: list[Message] | None = None
+    ) -> None:
         message = delivery.message
         with self.broker._write() as conn:
             self._delete_fenced(conn, delivery)

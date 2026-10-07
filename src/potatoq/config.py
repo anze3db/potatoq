@@ -61,9 +61,7 @@ DEFAULTS: dict[str, Any] = {
     "worker_dead_after": 60.0,  # a worker silent this long is dead; its tasks are recovered
     "worker_hijack_root_logger": False,
     "worker_log_format": "[%(asctime)s: %(levelname)s/%(processName)s] %(message)s",
-    "worker_task_log_format": (
-        "[%(asctime)s: %(levelname)s/%(processName)s] %(task_name)s[%(task_id)s]: %(message)s"
-    ),
+    "worker_task_log_format": ("[%(asctime)s: %(levelname)s/%(processName)s] %(task_name)s[%(task_id)s]: %(message)s"),
     "worker_enable_scheduler": True,  # every worker runs the (deduplicated) scheduler
     # --- scheduling -------------------------------------------------------------
     "beat_schedule": {},

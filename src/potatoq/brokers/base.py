@@ -130,7 +130,9 @@ class Consumer:
         """
         raise NotImplementedError
 
-    def dead_letter(self, delivery: Delivery, reason: str, record: ResultRecord | None, followups: list[Message] | None = None) -> None:
+    def dead_letter(
+        self, delivery: Delivery, reason: str, record: ResultRecord | None, followups: list[Message] | None = None
+    ) -> None:
         """Park the message for inspection; it will not run again automatically."""
         raise NotImplementedError
 
@@ -148,6 +150,8 @@ class Broker:
     supports_results: bool = True
     #: Whether tasks can be enqueued inside the caller's database transaction.
     transactional: bool = False
+    #: Queued messages can't be deleted, so revocations are checked at run time.
+    needs_revoke_check: bool = False
 
     def __init__(self, url: str, app: Potatoq, **options: Any):
         self.url = url
@@ -240,9 +244,6 @@ class Broker:
 
     def revoke(self, task_ids: list[str], expires: float) -> None:
         raise NotImplementedError
-
-    def is_revoked(self, task_id: str) -> bool:
-        return False
 
     # --- inspection ---------------------------------------------------------------
 

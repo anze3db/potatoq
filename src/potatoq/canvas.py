@@ -110,7 +110,9 @@ class Signature(dict):  # type: ignore[type-arg]
     def delay(self, *partial_args: Any, **partial_kwargs: Any) -> AsyncResult:
         return self.apply_async(partial_args, partial_kwargs)
 
-    def apply_async(self, args: Any = None, kwargs: dict[str, Any] | None = None, route_name: Any = None, **options: Any) -> AsyncResult:
+    def apply_async(
+        self, args: Any = None, kwargs: dict[str, Any] | None = None, route_name: Any = None, **options: Any
+    ) -> AsyncResult:
         args, kwargs, options = self._merge(args, kwargs, options)
         task = self.app.tasks.get(self["task"])
         if task is None:
@@ -121,7 +123,9 @@ class Signature(dict):  # type: ignore[type-arg]
         args, kwargs, options = self._merge(args, kwargs, options)
         return self.type.apply(args, kwargs, **options)
 
-    def _merge(self, args: Any, kwargs: dict[str, Any] | None, options: dict[str, Any] | None) -> tuple[tuple[Any, ...], dict[str, Any], dict[str, Any]]:
+    def _merge(
+        self, args: Any, kwargs: dict[str, Any] | None, options: dict[str, Any] | None
+    ) -> tuple[tuple[Any, ...], dict[str, Any], dict[str, Any]]:
         args = tuple(args or ())
         kwargs = dict(kwargs or {})
         options = dict(options or {})
@@ -393,7 +397,11 @@ class group(Signature):
             task = self.app.tasks[t.task]
             targs, tkwargs, topts = t._merge(None, None, options)
             topts["task_id"] = t.id
-            messages.append(task.build_message(list(targs), tkwargs, **{k: v for k, v in topts.items() if k != "task_id"}, task_id=t.id))
+            messages.append(
+                task.build_message(
+                    list(targs), tkwargs, **{k: v for k, v in topts.items() if k != "task_id"}, task_id=t.id
+                )
+            )
         if messages:
             self.app.publish(messages)
         return result

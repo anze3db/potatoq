@@ -193,7 +193,14 @@ class AsyncResult:
         self._cache = None
         self.app.require_backend().forget(self.id)
 
-    def revoke(self, connection: Any = None, terminate: bool = False, signal: Any = None, wait: bool = False, timeout: float | None = None) -> None:
+    def revoke(
+        self,
+        connection: Any = None,
+        terminate: bool = False,
+        signal: Any = None,
+        wait: bool = False,
+        timeout: float | None = None,
+    ) -> None:
         self.app.control.revoke(self.id, terminate=terminate, signal=signal)
 
     def collect(self, intermediate: bool = False, **kwargs: Any) -> Iterator[tuple[AsyncResult, Any]]:
@@ -217,7 +224,15 @@ class AsyncResult:
 class EagerResult(AsyncResult):
     """Result of a task run locally with ``apply()`` / ``task_always_eager``."""
 
-    def __init__(self, id: str, ret_value: Any, state: str, traceback: str | None = None, app: Potatoq | None = None, name: str | None = None):
+    def __init__(
+        self,
+        id: str,
+        ret_value: Any,
+        state: str,
+        traceback: str | None = None,
+        app: Potatoq | None = None,
+        name: str | None = None,
+    ):
         super().__init__(id, app=app, task_name=name)
         self._value = ret_value
         self._state = state
@@ -239,7 +254,9 @@ class EagerResult(AsyncResult):
     def traceback(self) -> str | None:
         return self._traceback
 
-    def get(self, timeout: float | None = None, propagate: bool = True, disable_sync_subtasks: bool = True, **kwargs: Any) -> Any:
+    def get(
+        self, timeout: float | None = None, propagate: bool = True, disable_sync_subtasks: bool = True, **kwargs: Any
+    ) -> Any:
         if propagate and self._state in states.PROPAGATE_STATES and isinstance(self._value, BaseException):
             raise self._value
         return self._value
@@ -300,10 +317,24 @@ class ResultSet:
         for r in self.results:
             r.forget()
 
-    def get(self, timeout: float | None = None, propagate: bool = True, interval: float = 0.5, disable_sync_subtasks: bool = True, **kwargs: Any) -> list[Any]:
+    def get(
+        self,
+        timeout: float | None = None,
+        propagate: bool = True,
+        interval: float = 0.5,
+        disable_sync_subtasks: bool = True,
+        **kwargs: Any,
+    ) -> list[Any]:
         return self.join(timeout=timeout, propagate=propagate, disable_sync_subtasks=disable_sync_subtasks)
 
-    def join(self, timeout: float | None = None, propagate: bool = True, interval: float = 0.5, disable_sync_subtasks: bool = True, **kwargs: Any) -> list[Any]:
+    def join(
+        self,
+        timeout: float | None = None,
+        propagate: bool = True,
+        interval: float = 0.5,
+        disable_sync_subtasks: bool = True,
+        **kwargs: Any,
+    ) -> list[Any]:
         if disable_sync_subtasks:
             _assert_will_not_block(self.app)
         deadline = None if timeout is None else time.monotonic() + timeout
@@ -320,7 +351,14 @@ class ResultSet:
 
 
 class GroupResult(ResultSet):
-    def __init__(self, id: str | None = None, results: list[AsyncResult] | None = None, parent: Any = None, app: Potatoq | None = None, **kwargs: Any):
+    def __init__(
+        self,
+        id: str | None = None,
+        results: list[AsyncResult] | None = None,
+        parent: Any = None,
+        app: Potatoq | None = None,
+        **kwargs: Any,
+    ):
         super().__init__(results or [], app=app)
         self.id = id
         self.parent = parent

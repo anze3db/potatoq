@@ -131,7 +131,9 @@ class Potatoq:
         global _default_app
         _default_app = self
 
-    def config_from_object(self, obj: Any, silent: bool = False, force: bool = False, namespace: str | None = None) -> None:
+    def config_from_object(
+        self, obj: Any, silent: bool = False, force: bool = False, namespace: str | None = None
+    ) -> None:
         try:
             self.conf.update_from_object(obj, namespace=namespace)
         except ImportError:
@@ -179,7 +181,9 @@ class Potatoq:
             raise TypeError("@app.task() takes keyword arguments only")
         return decorator
 
-    def _task_from_fun(self, fun: Callable[..., Any], name: str | None = None, base: Any = None, bind: bool = False, **options: Any) -> Task:
+    def _task_from_fun(
+        self, fun: Callable[..., Any], name: str | None = None, base: Any = None, bind: bool = False, **options: Any
+    ) -> Task:
         name = name or self.gen_task_name(fun.__name__, fun.__module__)
         if name in self.tasks and getattr(self.tasks[name], "__wrapped__", None) is fun:
             return self.tasks[name]
@@ -191,7 +195,17 @@ class Potatoq:
             base = load_object(base)
         if options.pop("shared", True) is False:
             pass
-        for ignored in ("lazy", "trail", "send_events", "routing_key", "exchange", "pydantic", "throws", "resultrepr_maxsize", "acks_on_failure_or_timeout"):
+        for ignored in (
+            "lazy",
+            "trail",
+            "send_events",
+            "routing_key",
+            "exchange",
+            "pydantic",
+            "throws",
+            "resultrepr_maxsize",
+            "acks_on_failure_or_timeout",
+        ):
             options.pop(ignored, None)
         run = fun if bind else staticmethod(fun)
         attrs: dict[str, Any] = {
@@ -417,9 +431,7 @@ class Potatoq:
                     return {"queue": result} if isinstance(result, str) else dict(result)
                 continue
             for pattern, options in route.items():
-                matched = (
-                    pattern.match(name) if isinstance(pattern, re.Pattern) else fnmatch.fnmatchcase(name, pattern)
-                )
+                matched = pattern.match(name) if isinstance(pattern, re.Pattern) else fnmatch.fnmatchcase(name, pattern)
                 if matched:
                     return {"queue": options} if isinstance(options, str) else dict(options)
         return {}
@@ -442,7 +454,9 @@ class Potatoq:
         else:
             options.setdefault("_skip_typing", True)
         options.pop("_skip_typing", None)
-        message = task.build_message(list(args or ()), dict(kwargs or {}), task_id, countdown=countdown, eta=eta, **options)
+        message = task.build_message(
+            list(args or ()), dict(kwargs or {}), task_id, countdown=countdown, eta=eta, **options
+        )
         self.publish([message], connection=options.get("connection"))
         return self.AsyncResult(message.id)
 

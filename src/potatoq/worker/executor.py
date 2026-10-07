@@ -76,7 +76,13 @@ class ExceptionInfo:
         return self.traceback
 
 
-def build_request(message: Message, delivery_count: int, hostname: str | None, is_eager: bool, timelimit: tuple[float | None, float | None]) -> Context:
+def build_request(
+    message: Message,
+    delivery_count: int,
+    hostname: str | None,
+    is_eager: bool,
+    timelimit: tuple[float | None, float | None],
+) -> Context:
     return Context(
         id=message.id,
         task=message.task,
@@ -104,7 +110,9 @@ def build_request(message: Message, delivery_count: int, hostname: str | None, i
     )
 
 
-def _record(message: Message, state: str, result: Any, request: Context | None, traceback: str | None = None) -> ResultRecord:
+def _record(
+    message: Message, state: str, result: Any, request: Context | None, traceback: str | None = None
+) -> ResultRecord:
     return ResultRecord(
         task_id=message.id,
         state=state,
@@ -166,7 +174,13 @@ def signature_to_messages(app: Potatoq, sig: Signature, args: tuple[Any, ...], p
     task = app.tasks.get(sig.task)
     task_id = topts.pop("task_id", None)
     if task is None:
-        msg = Message(task=sig.task, args=list(targs), kwargs=tkwargs, id=task_id or new_id(), queue=topts.get("queue") or app.conf.task_default_queue)
+        msg = Message(
+            task=sig.task,
+            args=list(targs),
+            kwargs=tkwargs,
+            id=task_id or new_id(),
+            queue=topts.get("queue") or app.conf.task_default_queue,
+        )
         msg.link = [s.to_dict() if isinstance(s, Signature) else s for s in topts.get("link", [])]
         msg.link_error = [s.to_dict() if isinstance(s, Signature) else s for s in topts.get("link_error", [])]
         if parent:
@@ -174,7 +188,9 @@ def signature_to_messages(app: Potatoq, sig: Signature, args: tuple[Any, ...], p
         return [msg]
     link = topts.pop("link", None)
     link_error = topts.pop("link_error", None)
-    return [task.build_message(list(targs), tkwargs, task_id, link=link, link_error=link_error, **{**parent_opts, **topts})]
+    return [
+        task.build_message(list(targs), tkwargs, task_id, link=link, link_error=link_error, **{**parent_opts, **topts})
+    ]
 
 
 def _chord_followups(app: Potatoq, message: Message, value: Any, failed_exc: BaseException | None) -> list[Message]:
@@ -192,10 +208,17 @@ def _chord_followups(app: Potatoq, message: Message, value: Any, failed_exc: Bas
         exc = serialization.exception_from_dict(errors[0]["__chord_error__"])
         chord_exc = ChordError(f"Dependency of chord {message.group_id} raised {exc!r}")
         callback_id = callback.id or new_id()
-        app.store_result(callback_id, states.FAILURE, serialization.exception_to_dict(chord_exc), task_name=callback.task)
+        app.store_result(
+            callback_id, states.FAILURE, serialization.exception_to_dict(chord_exc), task_name=callback.task
+        )
         errbacks = callback.options.get("link_error") or []
         fake_parent = Message(task=callback.task, id=callback_id, root_id=message.root_id)
-        return _callbacks(app, [Signature.from_dict(e, app=app).to_dict() if isinstance(e, dict) else e for e in errbacks], (callback_id,), fake_parent)
+        return _callbacks(
+            app,
+            [Signature.from_dict(e, app=app).to_dict() if isinstance(e, dict) else e for e in errbacks],
+            (callback_id,),
+            fake_parent,
+        )
     return signature_to_messages(app, callback, (results,), message)
 
 
@@ -226,18 +249,21 @@ def execute(
         return Outcome(COMPLETE, states.REVOKED, record=rec, reason="expired")
 
     backend = app.backend
-    if backend is not None and backend.is_revoked(message.id):
-        signals.task_revoked.send(sender=task, request=request, terminated=False, signum=None, expired=False)
-        rec = _record(message, states.REVOKED, None, request)
-        return Outcome(COMPLETE, states.REVOKED, record=rec, reason="revoked")
-
-    if delivery_count > 1 and backend is not None and not message.ignore_result:
-        # Redelivered after a crash: if the previous attempt got as far as storing a
-        # final result, don't run the task again.
+    previous = None
+    if backend is not None and (delivery_count > 1 or app.broker.needs_revoke_check):
         previous = backend.get_result(message.id)
-        if previous is not None and previous.ready:
-            logger.info("Task %s[%s] already finished (%s); skipping redelivery", message.task, message.id, previous.state)
-            return Outcome(COMPLETE, previous.state, reason="already finished")
+    if previous is not None and previous.state == states.REVOKED:
+        # Brokers that can't delete queued messages (RabbitMQ) mark revoked tasks in
+        # the result backend instead.
+        signals.task_revoked.send(sender=task, request=request, terminated=False, signum=None, expired=False)
+        return Outcome(COMPLETE, states.REVOKED, reason="revoked")
+    if previous is not None and previous.ready and delivery_count > 1:
+        # Redelivered after a crash, but the previous attempt got as far as storing a
+        # final result: don't run the task again.
+        logger.info("Task %s[%s] already finished (%s); skipping redelivery", message.task, message.id, previous.state)
+        if previous.state == states.FAILURE and app.conf.task_dead_letter_failures:
+            return Outcome(DEAD_LETTER, states.FAILURE, reason=previous.traceback or "failed before redelivery")
+        return Outcome(COMPLETE, states.IGNORED, reason="already finished")
 
     ignore_result = message.ignore_result
     store = backend is not None and not ignore_result
@@ -257,10 +283,18 @@ def execute(
             finally:
                 IN_TASK_BODY = False
         except Exception as exc:
-            if task.autoretry_for and isinstance(exc, task.autoretry_for) and not isinstance(exc, (Retry, Ignore, Reject)):
+            if (
+                task.autoretry_for
+                and isinstance(exc, task.autoretry_for)
+                and not isinstance(exc, (Retry, Ignore, Reject))
+            ):
                 if not (task.dont_autoretry_for and isinstance(exc, task.dont_autoretry_for)):
                     try:
-                        retry_opts = {k: v for k, v in task.retry_kwargs.items() if k not in ("max_retries", "countdown", "retry_backoff")}
+                        retry_opts = {
+                            k: v
+                            for k, v in task.retry_kwargs.items()
+                            if k not in ("max_retries", "countdown", "retry_backoff")
+                        }
                         task.retry(exc=exc, countdown=task.backoff_delay(message.retries), **retry_opts)
                     except Retry as retry_exc:
                         raise retry_exc from exc
@@ -287,7 +321,15 @@ def execute(
             task.after_return(state, retval, message.id, message.args, message.kwargs, None)
         except Exception:
             logger.exception("after_return handler of %s failed", task.name)
-        signals.task_postrun.send(sender=task, task_id=message.id, task=task, args=message.args, kwargs=message.kwargs, retval=retval, state=state)
+        signals.task_postrun.send(
+            sender=task,
+            task_id=message.id,
+            task=task,
+            args=message.args,
+            kwargs=message.kwargs,
+            retval=retval,
+            state=state,
+        )
         task.pop_request()
         set_current_task(None)
     outcome.runtime = time.monotonic() - start
@@ -338,19 +380,35 @@ def _on_retry(app: Potatoq, task: Task, message: Message, request: Context, exc:
     except Exception:
         logger.exception("on_retry handler of %s failed", task.name)
     signals.task_retry.send(sender=task, request=request, reason=exc, einfo=einfo)
-    record = _record(message, states.RETRY, serialization.exception_to_dict(cause), request, einfo.traceback) if store else None
+    record = (
+        _record(message, states.RETRY, serialization.exception_to_dict(cause), request, einfo.traceback)
+        if store
+        else None
+    )
     logger.info("Task %s[%s] retry %s: %s", message.task, message.id, exc.humanize(), cause)
     return Outcome(RETRY, states.RETRY, record=record, retry_message=new, exc=cause, traceback=einfo.traceback)
 
 
-def _on_failure(app: Potatoq, task: Task, message: Message, request: Context, exc: BaseException, store: bool) -> Outcome:
+def _on_failure(
+    app: Potatoq, task: Task, message: Message, request: Context, exc: BaseException, store: bool
+) -> Outcome:
     einfo = ExceptionInfo(exc)
     if isinstance(exc, MaxRetriesExceededError):
         logger.error("Task %s[%s] max retries exceeded", message.task, message.id)
     else:
-        logger.error("Task %s[%s] raised unexpected: %r", message.task, message.id, exc, exc_info=(type(exc), exc, exc.__traceback__))
+        logger.error(
+            "Task %s[%s] raised unexpected: %r",
+            message.task,
+            message.id,
+            exc,
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
     store = store or (app.backend is not None and task.store_errors_even_if_ignored)
-    record = _record(message, states.FAILURE, serialization.exception_to_dict(exc), request, einfo.traceback) if store else None
+    record = (
+        _record(message, states.FAILURE, serialization.exception_to_dict(exc), request, einfo.traceback)
+        if store
+        else None
+    )
     try:
         task.on_failure(exc, message.id, message.args, message.kwargs, einfo)
     except Exception:
@@ -370,13 +428,23 @@ def failure_outcome(app: Potatoq, message: Message, exc: BaseException, hostname
     request = build_request(message, 1, hostname, False, (None, None))
     store = app.backend is not None and not message.ignore_result
     traceback = f"{type(exc).__name__}: {exc}"
-    record = _record(message, states.FAILURE, serialization.exception_to_dict(exc), request, traceback) if store else None
+    record = (
+        _record(message, states.FAILURE, serialization.exception_to_dict(exc), request, traceback) if store else None
+    )
     if task is not None:
         try:
             task.on_failure(exc, message.id, message.args, message.kwargs, ExceptionInfo(exc))
         except Exception:
             logger.exception("on_failure handler of %s failed", message.task)
-        signals.task_failure.send(sender=task, task_id=message.id, exception=exc, args=message.args, kwargs=message.kwargs, traceback=None, einfo=None)
+        signals.task_failure.send(
+            sender=task,
+            task_id=message.id,
+            exception=exc,
+            args=message.args,
+            kwargs=message.kwargs,
+            traceback=None,
+            einfo=None,
+        )
     followups = _callbacks(app, message.link_error, (message.id,), message)
     try:
         followups += _chord_followups(app, message, None, exc)

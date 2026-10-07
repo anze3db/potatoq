@@ -458,7 +458,7 @@ class Task:
             raise MaxRetriesExceededError("Task can't be retried when called directly")
 
         if max_retries is None:
-            max_retries = (request.message.options.get("max_retries") if request.message else None)
+            max_retries = request.message.options.get("max_retries") if request.message else None
         if max_retries is None:
             max_retries = self.resolved_max_retries()
         if max_retries is not None and request.retries >= max_retries:
@@ -513,7 +513,9 @@ class Task:
 
         return AsyncResult(task_id, app=self.app, task_name=self.name, **kwargs)
 
-    def update_state(self, task_id: str | None = None, state: str | None = None, meta: Any = None, **kwargs: Any) -> None:
+    def update_state(
+        self, task_id: str | None = None, state: str | None = None, meta: Any = None, **kwargs: Any
+    ) -> None:
         task_id = task_id or self.request.id
         if not task_id:
             return

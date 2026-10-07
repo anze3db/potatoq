@@ -53,7 +53,14 @@ class Control:
     def inspect(self, destination: list[str] | None = None, timeout: float = 1.0, **kwargs: Any) -> Inspect:
         return Inspect(self.app, destination, timeout)
 
-    def revoke(self, task_id: str | list[str], destination: Any = None, terminate: bool = False, signal: Any = None, **kwargs: Any) -> None:
+    def revoke(
+        self,
+        task_id: str | list[str],
+        destination: Any = None,
+        terminate: bool = False,
+        signal: Any = None,
+        **kwargs: Any,
+    ) -> None:
         """Prevent tasks that haven't started from running.
 
         Database and Redis brokers delete the waiting task outright; RabbitMQ marks it

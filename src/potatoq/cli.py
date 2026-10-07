@@ -79,7 +79,9 @@ def build_parser() -> argparse.ArgumentParser:
     w.add_argument("--max-memory-per-child", default=-1, help="e.g. 512MB, or KiB like Celery")
     w.add_argument("--shutdown-timeout", type=float)
     w.add_argument("--no-scheduler", action="store_true", help="Don't run periodic tasks on this worker")
-    w.add_argument("-B", "--beat", action="store_true", help="(Celery compat) the scheduler already runs in every worker")
+    w.add_argument(
+        "-B", "--beat", action="store_true", help="(Celery compat) the scheduler already runs in every worker"
+    )
     w.add_argument("-O", dest="optimization", help="(Celery compat, ignored) fair scheduling is the default")
     w.add_argument("--time-limit", type=float)
     w.add_argument("--soft-time-limit", type=float)
@@ -203,7 +205,9 @@ def run_solo(app: Potatoq, args: argparse.Namespace) -> int:
     last_beat = 0.0
     while not stop["flag"]:
         if time.monotonic() - last_beat > app.conf.worker_heartbeat_interval:
-            app.broker.heartbeat(node_id, {"hostname": hostname, "pid": os.getpid(), "queues": queues, "concurrency": 1})
+            app.broker.heartbeat(
+                node_id, {"hostname": hostname, "pid": os.getpid(), "queues": queues, "concurrency": 1}
+            )
             app.broker.tick()
             last_beat = time.monotonic()
         delivery = consumer.fetch(timeout=1.0)
@@ -211,7 +215,13 @@ def run_solo(app: Potatoq, args: argparse.Namespace) -> int:
             continue
         outcome = executor.execute(app, delivery.message, delivery_count=delivery.delivery_count, hostname=hostname)
         executor.settle(app, consumer, delivery, outcome)
-        logger.info("Task %s[%s] %s in %.3fs", delivery.message.task, delivery.message.id, outcome.state.lower(), outcome.runtime)
+        logger.info(
+            "Task %s[%s] %s in %.3fs",
+            delivery.message.task,
+            delivery.message.id,
+            outcome.state.lower(),
+            outcome.runtime,
+        )
     app.broker.unregister(node_id)
     return 0
 
@@ -251,7 +261,9 @@ def cmd_status(app: Potatoq, args: argparse.Namespace) -> int:
     now = time.time()
     for w in workers:
         age = now - float(w.get("heartbeat", now))
-        print(f"{w['id']}: queues={','.join(w.get('queues', []))} concurrency={w.get('concurrency')} running={len(w.get('running', []))} heartbeat={age:.0f}s ago")
+        print(
+            f"{w['id']}: queues={','.join(w.get('queues', []))} concurrency={w.get('concurrency')} running={len(w.get('running', []))} heartbeat={age:.0f}s ago"
+        )
     return 0
 
 
@@ -303,7 +315,9 @@ def cmd_call(app: Potatoq, args: argparse.Namespace) -> int:
     options: dict[str, Any] = {}
     if args.queue:
         options["queue"] = args.queue
-    result = app.send_task(args.name, json.loads(args.args), json.loads(args.kwargs), countdown=args.countdown, **options)
+    result = app.send_task(
+        args.name, json.loads(args.args), json.loads(args.kwargs), countdown=args.countdown, **options
+    )
     print(result.id)
     return 0
 
@@ -342,7 +356,10 @@ def cmd_shell(app: Potatoq, args: argparse.Namespace) -> int:
     import code
 
     app.loader_import_default_modules()
-    namespace = {"app": app, **{t.name.rsplit(".", 1)[-1]: t for t in app.tasks.values() if not t.name.startswith("potatoq.")}}
+    namespace = {
+        "app": app,
+        **{t.name.rsplit(".", 1)[-1]: t for t in app.tasks.values() if not t.name.startswith("potatoq.")},
+    }
     code.interact(local=namespace, banner=f"potatoq shell ({app})")
     return 0
 
