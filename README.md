@@ -53,7 +53,7 @@ Every Celery deployment eventually learns these the hard way. In Potatoq they ar
 | `async def` tasks | not supported | **supported** |
 | Gossip/mingle/heartbeat chatter | on | **doesn't exist** |
 
-Why each one, with sources: [docs/defaults.md](docs/defaults.md).
+Why each one, with sources: [docs/design/defaults.md](docs/design/defaults.md).
 
 ## Install
 
@@ -76,7 +76,7 @@ Python 3.11+.
 | `amqp://…` | Existing RabbitMQ shops | Quorum queues, publisher confirms, 28-level TTL delay cascade, dead-letter queues |
 | `memory://` | Unit tests | In-process, with `potatoq.testing.drain()` |
 
-The design and research behind each backend are in [docs/backends.md](docs/backends.md).
+The design and research behind each backend are in [docs/design/internals.md](docs/design/internals.md).
 
 Results are stored by default on the database brokers, where writing a result is part of
 the same transaction as the acknowledgement and costs nothing. On Redis and RabbitMQ they
@@ -229,12 +229,20 @@ and disabling remote control, because RabbitMQ 4.3 rejects Celery's transient pi
 queues. Potatoq needed none. Redis, Postgres and SQLite numbers vary by about ±10% between runs. RabbitMQ numbers swing up to 2× with machine load, because every publish waits for the broker to confirm it.
 
 There is no Rust in the hot path, and that's deliberate. The research
-([docs/backends.md#rust](docs/backends.md#rust)) found that per-task overhead is
+([docs/design/internals.md#rust](docs/design/internals.md#rust)) found that per-task overhead is
 dominated by broker round trips. Potatoq minimizes those: one Lua call or one SQL
 statement per state change, with the result, ack and follow-up tasks committed together.
 A Rust core measured +0–10% on realistic tasks, while costing fork-safety (prefork
 workers) and a much larger wheel matrix. The serialization seam is kept so a native
 codec can be added later as an optional extra.
+
+## Documentation
+
+Full docs live in [`docs/`](docs/) and build into a site with [Zensical](https://zensical.org):
+
+```console
+$ uv run --group docs zensical serve      # http://localhost:8000
+```
 
 ## Development
 

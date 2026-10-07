@@ -9,7 +9,7 @@ Each default below was chosen by cross-checking:
 * **Python alternatives.** Dramatiq, RQ, Huey, arq, Taskiq, Procrastinate, SAQ and Django 6
   Tasks, plus the Postgres-native designs of Oban and River.
 
-The raw research, with every source, is in [`docs/research/`](research/).
+The raw research, with every source: [Celery pain points](research/celery-pain-points.md), [Ruby job queues](research/ruby-queues.md), [Python alternatives](research/python-alternatives.md).
 
 All settings use Celery's names (`app.conf.task_time_limit = ...`,
 `CELERY_TASK_TIME_LIMIT`, or `POTATOQ_TASK_TIME_LIMIT` in Django).

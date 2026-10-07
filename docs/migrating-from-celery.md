@@ -30,7 +30,21 @@ and the worker flags `-B`, `-O fair`, `--without-gossip`, `--without-mingle` and
 For Django, `celery.py` itself is optional: add `"potatoq.contrib.django"` to
 `INSTALLED_APPS` and `@shared_task` works.
 
-## 3. Things that behave differently, on purpose
+## 3. Deploy: new queues, then drain the old ones
+
+potatoq uses its own compact, versioned message format, designed for what comes next
+rather than compatibility with Celery's protocol. Celery and potatoq don't consume each
+other's messages, so switch over like this:
+
+1. Deploy potatoq workers next to your Celery workers. potatoq creates its own queues
+   (`default` instead of `celery`, its own tables or keys), so the two never collide.
+2. Deploy the producers (web/app code) using potatoq. New tasks go to the new queues.
+3. When the old Celery queues are empty, stop the Celery workers.
+
+On RabbitMQ, potatoq needs quorum queues and fails fast on a name that's taken by an
+existing classic queue. Pick new queue names rather than reusing Celery's.
+
+## 4. Things that behave differently, on purpose
 
 | Area | Celery | Potatoq | What to do |
 |---|---|---|---|
@@ -42,7 +56,7 @@ For Django, `celery.py` itself is optional: add `"potatoq.contrib.django"` to
 | Results on Redis/RabbitMQ | only if `result_backend` is set | the same | Nothing. On Postgres/SQLite brokers results are on by default. |
 | `.get()` on an ignored result | hangs | raises `ResultBackendDisabled` | |
 | Priorities | Redis: 0 = highest | higher number = higher priority everywhere | Invert priorities if you used Redis priorities. |
-| Default queue | `celery` | `default` | Set `task_default_queue = "celery"` if you route by queue name. |
+| Default queue | `celery` | `default` | Keep potatoq on its own queues (see below). |
 | Process recycling | never | every 1000 tasks | `worker_max_tasks_per_child = None` to disable. |
 | Concurrency | host CPU count | CPUs available to the container | Set `-c` explicitly if you relied on the old value. |
 | `beat` | separate process | runs in every worker, deduplicated | Stop running `celery beat`. `potatoq beat` exists if you prefer a dedicated process. |
@@ -51,7 +65,7 @@ For Django, `celery.py` itself is optional: add `"potatoq.contrib.django"` to
 | Naive `eta` datetimes | treated as UTC/local | rejected | Pass aware datetimes or use `countdown`. |
 | Root logger | hijacked | left alone | |
 
-## 4. Not supported (yet)
+## 5. Not supported (yet)
 
 * **Pools other than prefork.** `-P solo` runs in-process. Threads, gevent and eventlet
   fall back to prefork with a warning. `async def` tasks are supported natively, which
@@ -60,10 +74,6 @@ For Django, `celery.py` itself is optional: add `"potatoq.contrib.django"` to
   planned.
 * **`revoke(terminate=True)`** of a running task. Waiting tasks are revoked; use time
   limits for running ones.
-* **The Celery wire format.** Potatoq workers don't consume messages produced by Celery,
-  and vice versa. Migrate by deploying Potatoq producers and workers together. Old Celery
-  workers can drain their queues in parallel; use a different queue name or broker
-  database to keep them apart.
 * `celery multi`, bootsteps, custom remote-control commands, events and Flower.
   `potatoq status` and `potatoq inspect` read worker heartbeats instead.
 * Redis Cluster, `solar` schedules, `chunks` (implemented via `starmap`, lightly tested).

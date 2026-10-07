@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="potatoq">
+  <defs>
+    <linearGradient id="skin" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f6c66b"/>
+      <stop offset="1" stop-color="#d98e2b"/>
+    </linearGradient>
+  </defs>
+  <!-- potato body -->
+  <path d="M31 6c13 0 25 8 25 23 0 14-10 25-25 25S6 45 6 31C6 17 17 6 31 6z" fill="url(#skin)"/>
+  <!-- the q tail: a queue item leaving the potato -->
+  <path d="M44 46l11 11" stroke="#7c4a12" stroke-width="7" stroke-linecap="round"/>
+  <!-- eyes -->
+  <circle cx="22" cy="22" r="2.6" fill="#7c4a12" opacity=".55"/>
+  <circle cx="37" cy="17" r="2" fill="#7c4a12" opacity=".45"/>
+  <circle cx="40" cy="33" r="2.4" fill="#7c4a12" opacity=".5"/>
+  <circle cx="24" cy="38" r="1.8" fill="#7c4a12" opacity=".4"/>
+</svg>

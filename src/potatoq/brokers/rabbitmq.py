@@ -173,10 +173,12 @@ class RabbitMQBroker(Broker):
         try:
             ch.queue_declare(name, durable=True, arguments=args)
         except AMQPChannelError as exc:
-            # Exists with different arguments (e.g. created by Celery): use it as is.
-            logger.warning("Queue %r exists with different arguments (%s); using it unchanged", name, exc)
-            ch = self._reset_channel()
-            ch.queue_declare(name, passive=True)
+            self._reset_channel()
+            raise ImproperlyConfigured(
+                f"RabbitMQ queue {name!r} already exists with different arguments (for example a classic "
+                f"queue created by Celery): {exc}. potatoq needs its own quorum queues; use a new queue name "
+                "(task_default_queue / -Q) or delete the old queue once it's drained."
+            ) from exc
         ch.queue_declare(f"{name}.dlq", durable=True, arguments={"x-queue-type": "quorum", "x-delivery-limit": -1})
         ch.queue_bind(f"{name}.dlq", DLX, routing_key=name)
         ch.queue_bind(name, DELIVERY_EXCHANGE, routing_key=f"#.{name}")
