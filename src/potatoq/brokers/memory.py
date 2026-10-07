@@ -117,12 +117,9 @@ class MemoryBroker(Broker):
     def chord_part_done(self, group_id: str, index: int, size: int, result: Any) -> list[Any] | None:
         with self.lock:
             parts = self.chords.setdefault(group_id, {})
-            if index in parts:
-                return None
-            parts[index] = serialization.loads(serialization.dumps(result))
+            parts.setdefault(index, serialization.loads(serialization.dumps(result)))
             if len(parts) < size:
                 return None
-            del self.chords[group_id]
             return [parts[i] for i in sorted(parts)]
 
     def revoke(self, task_ids: list[str], expires: float) -> None:
@@ -217,8 +214,9 @@ class MemoryConsumer(Consumer):
 
     def complete(self, delivery: Delivery, record: ResultRecord | None, followups: list[Message]) -> None:
         with self.broker.lock:
-            if self._owned(delivery) is not None:
-                del self.broker.jobs[delivery.handle[0]]
+            if self._owned(delivery) is None:
+                return
+            del self.broker.jobs[delivery.handle[0]]
         if record is not None:
             self.broker.store_result(record, self.broker.app.conf.result_expires)
         self.broker.enqueue(followups)
@@ -247,8 +245,9 @@ class MemoryConsumer(Consumer):
     ) -> None:
         m = delivery.message
         with self.broker.lock:
-            if self._owned(delivery) is not None:
-                del self.broker.jobs[delivery.handle[0]]
+            if self._owned(delivery) is None:
+                return
+            del self.broker.jobs[delivery.handle[0]]
             self.broker.dead[m.id] = {
                 "id": m.id,
                 "queue": m.queue,

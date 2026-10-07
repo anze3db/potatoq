@@ -7,7 +7,9 @@
         session.add(user)
         send_welcome.delay(user.id)   # sent after COMMIT, dropped on ROLLBACK
 
-When the broker is the same database as the session (Postgres or SQLite), the task
+Tasks are only deferred once the transaction has written something: SQLAlchemy 2.0
+begins a transaction on any query, and a read-only request that never commits must
+not drop its tasks. When the broker is the same database as the session (Postgres or SQLite), the task
 rows are written through the session's own connection instead, so they commit
 atomically with your data. Works for ``Session``, ``scoped_session``, Flask-SQLAlchemy
 and ``AsyncSession`` (its sync session fires the same events).
@@ -42,25 +44,54 @@ def _after_begin(session: Session, transaction: Any, connection: Any) -> None:
         _sessions.set((*tuple(r for r in current if r() is not None), weakref.ref(session)))
 
 
+_WROTE = "potatoq_wrote"
+
+
 def _after_commit(session: Session) -> None:
+    session.info.pop(_WROTE, None)
     callbacks = session.info.pop(_KEY, None)
     for fn in callbacks or ():
         fn()
 
 
 def _after_rollback(session: Session) -> None:
+    session.info.pop(_WROTE, None)
     session.info.pop(_KEY, None)
 
 
+def _after_flush(session: Session, flush_context: Any) -> None:
+    session.info[_WROTE] = True
+
+
+_READ_ONLY = ("select", "with", "show", "explain", "pragma", "values")
+
+
+def _do_orm_execute(state: Any) -> None:
+    if state.is_select:
+        return
+    sql = getattr(state.statement, "text", None)  # text("...") isn't flagged as a select
+    if isinstance(sql, str) and sql.lstrip().lower().startswith(_READ_ONLY):
+        return
+    state.session.info[_WROTE] = True
+
+
+def _writing(session: Session) -> bool:
+    """SQLAlchemy 2.0 "autobegins" a transaction on any query, so being in a
+    transaction doesn't mean the task depends on uncommitted data. Only defer when
+    this transaction wrote something (or is about to flush something); otherwise a
+    read-only request that never commits would silently drop its tasks."""
+    return bool(session.info.get(_WROTE) or session.new or session.dirty or session.deleted)
+
+
 def _current_session(using: Any) -> Session | None:
-    if isinstance(using, Session):
+    if isinstance(using, Session):  # explicit: the caller knows best
         return using if using.in_transaction() else None
     if using is not None and hasattr(using, "registry") and callable(using):  # scoped_session
         session = using()
         return session if session.in_transaction() else None
     for ref in reversed(_sessions.get()):
         session = ref()
-        if session is not None and session.in_transaction():
+        if session is not None and session.in_transaction() and _writing(session):
             return session
     return None
 
@@ -113,6 +144,8 @@ def install(app: Potatoq, target: Any = Session) -> None:
         event.listen(target, "after_begin", _after_begin)
         event.listen(target, "after_commit", _after_commit)
         event.listen(target, "after_rollback", _after_rollback)
+        event.listen(target, "after_flush", _after_flush)
+        event.listen(target, "do_orm_execute", _do_orm_execute)
         event.listen(
             target,
             "after_soft_rollback",

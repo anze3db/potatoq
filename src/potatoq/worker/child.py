@@ -9,7 +9,6 @@ can enforce hard time limits and recover the task if this process dies.
 from __future__ import annotations
 
 import inspect
-import json
 import logging
 import os
 import resource
@@ -18,7 +17,7 @@ import sys
 import time
 from typing import TYPE_CHECKING, Any
 
-from .. import signals
+from .. import serialization, signals
 from ..exceptions import SoftTimeLimitExceeded, WorkerTerminate
 from . import executor
 
@@ -95,7 +94,7 @@ class Child:
     # --- reporting -----------------------------------------------------------------
 
     def _report(self, event: dict[str, Any]) -> None:
-        data = (json.dumps(event, separators=(",", ":"), default=str) + "\n").encode()
+        data = (serialization.dumps(event) + "\n").encode()
         while data:
             try:
                 written = os.write(self.write_fd, data)
@@ -185,7 +184,10 @@ class Child:
         try:
             executor.settle(app, self.consumer, delivery, outcome)
         except Exception:
-            logger.exception("Failed to settle task %s[%s]", message.task, message.id)
+            # Don't carry on with a task still claimed (SQL) or unacked (RabbitMQ):
+            # exit without reporting "done" so the supervisor recovers it.
+            logger.exception("Failed to settle task %s[%s]; restarting this process", message.task, message.id)
+            raise SystemExit(3) from None
         level = logging.INFO if outcome.state in ("SUCCESS", "RETRY", "IGNORED") else logging.WARNING
         logger.log(level, "Task %s[%s] %s in %.3fs", message.task, message.id, outcome.state.lower(), outcome.runtime)
         self._report({"e": "done", "id": message.id})
@@ -197,6 +199,8 @@ def child_main(app: Potatoq, **kwargs: Any) -> None:
     code = 1
     try:
         code = Child(app, **kwargs).run()
+    except SystemExit as exc:
+        code = exc.code if isinstance(exc.code, int) else 1
     except BaseException:
         logger.exception("Worker child crashed")
     finally:

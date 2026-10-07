@@ -169,6 +169,10 @@ optimized for 4.3.
 * **Results and revocation** need a `result_backend` (Redis, Postgres or SQLite). RabbitMQ
   can't delete queued messages, so revoked IDs are recorded in the result backend and
   workers skip them. Worker heartbeats also go to the result backend when there is one.
+* **Hard time limits without a result backend**: the supervisor can't ack a message
+  owned by a killed child's channel. With a result backend, the `TimeLimitExceeded`
+  failure is recorded and the redelivered copy is skipped. Without one, RabbitMQ
+  redelivers it until the delivery limit, and the worker warns about this at startup.
 * **Periodic tasks**: a single-active-consumer quorum queue holds a "token" message that
   is never acked. Whoever holds it runs the scheduler, and if that process dies the token
   moves to the next consumer. No external lock is needed.

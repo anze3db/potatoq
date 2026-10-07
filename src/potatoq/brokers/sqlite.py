@@ -11,7 +11,7 @@ Design (see docs/backends.md for the research behind it):
   other connection commits) and only take the write lock when a cheap read says
   there is work. Idle workers cost almost nothing and wake within milliseconds.
 * Running tasks are owned by ``(worker node, pid)``; nodes heartbeat; tasks of dead
-  nodes are recovered. ``deliveries`` doubles as a fencing token so a worker that
+  nodes are recovered. Every claim gets a random ``token`` that fences acks, so a worker that
   lost its claim can't ack a task that was handed to someone else.
 """
 
@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import sqlite3
 import threading
 import time
@@ -43,6 +44,7 @@ CREATE TABLE IF NOT EXISTS potatoq_jobs (
     priority    INTEGER NOT NULL DEFAULT 0,
     run_at      REAL    NOT NULL,
     deliveries  INTEGER NOT NULL DEFAULT 0,
+    token       INTEGER,
     worker      TEXT,
     pid         INTEGER,
     claimed_at  REAL,
@@ -164,6 +166,9 @@ class SQLiteBroker(Broker):
         if mode.lower() != "wal":
             conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript(SCHEMA)
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(potatoq_jobs)")}
+        if "token" not in columns:  # tables created by potatoq < 0.1.0 final
+            conn.execute("ALTER TABLE potatoq_jobs ADD COLUMN token INTEGER")
 
     def _write(self, conn: sqlite3.Connection | None = None) -> _WriteTxn:
         return _WriteTxn(conn or self.conn)
@@ -266,8 +271,8 @@ class SQLiteBroker(Broker):
 
     def _deliveries(self, rows: list[tuple[Any, ...]]) -> list[Delivery]:
         out = []
-        for job_id, deliveries, payload in rows:
-            out.append(Delivery(Message.decode(payload), delivery_count=deliveries, handle=(job_id, deliveries)))
+        for job_id, deliveries, token, payload in rows:
+            out.append(Delivery(Message.decode(payload), delivery_count=deliveries, handle=(job_id, token)))
         return out
 
     def recover(self, worker_dead_after: float) -> list[Delivery]:  # type: ignore[override]
@@ -278,10 +283,10 @@ class SQLiteBroker(Broker):
             dead_workers = "(SELECT id FROM potatoq_workers WHERE heartbeat >= ?)"
             exhausted = conn.execute(
                 f"DELETE FROM potatoq_jobs WHERE state = 2 AND worker NOT IN {dead_workers} AND deliveries >= ? "
-                "RETURNING id, deliveries, payload",
+                "RETURNING id, deliveries, token, payload",
                 (cutoff, limit),
             ).fetchall()
-            for job_id, _, payload in exhausted:
+            for job_id, _, _, payload in exhausted:
                 message = Message.decode(payload)
                 conn.execute(
                     "INSERT INTO potatoq_dead (id, queue, task, reason, died_at, payload) VALUES (?, ?, ?, ?, ?, ?) "
@@ -289,7 +294,7 @@ class SQLiteBroker(Broker):
                     (job_id, message.queue, message.task, "worker lost too many times", time.time(), payload),
                 )
             conn.execute(
-                f"UPDATE potatoq_jobs SET state = 1, worker = NULL, pid = NULL WHERE state = 2 AND worker NOT IN {dead_workers} AND deliveries < ?",
+                f"UPDATE potatoq_jobs SET state = 1, worker = NULL, pid = NULL, token = NULL WHERE state = 2 AND worker NOT IN {dead_workers} AND deliveries < ?",
                 (cutoff, limit),
             )
             conn.execute("DELETE FROM potatoq_workers WHERE heartbeat < ?", (cutoff - 3600,))
@@ -297,7 +302,7 @@ class SQLiteBroker(Broker):
 
     def lost_deliveries(self, worker_id: str, pid: int) -> list[Delivery]:
         rows = self.conn.execute(
-            "SELECT id, deliveries, payload FROM potatoq_jobs WHERE state = 2 AND worker = ? AND pid = ?",
+            "SELECT id, deliveries, token, payload FROM potatoq_jobs WHERE state = 2 AND worker = ? AND pid = ?",
             (worker_id, pid),
         ).fetchall()
         return self._deliveries(rows)
@@ -321,29 +326,32 @@ class SQLiteBroker(Broker):
         self.conn.execute("PRAGMA optimize")
 
     def chord_part_done(self, group_id: str, index: int, size: int, result: Any) -> list[Any] | None:
+        """See PostgresBroker.chord_part_done: complete exactly once, but return the
+        results again if a part is redelivered after completion."""
         now = time.time()
         with self._write() as conn:
-            cur = conn.execute(
+            inserted = conn.execute(
                 "INSERT INTO potatoq_chord_parts (group_id, idx, result, created_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
                 (group_id, index, serialization.dumps(result), now),
-            )
-            if cur.rowcount == 0:
-                return None  # duplicate delivery of the same part
+            ).rowcount
             conn.execute(
                 "INSERT INTO potatoq_chords (group_id, remaining, created_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
                 (group_id, size, now),
             )
-            remaining = conn.execute(
-                "UPDATE potatoq_chords SET remaining = remaining - 1 WHERE group_id = ? RETURNING remaining",
-                (group_id,),
-            ).fetchone()[0]
+            if inserted:
+                remaining = conn.execute(
+                    "UPDATE potatoq_chords SET remaining = remaining - 1 WHERE group_id = ? RETURNING remaining",
+                    (group_id,),
+                ).fetchone()[0]
+            else:
+                remaining = conn.execute(
+                    "SELECT remaining FROM potatoq_chords WHERE group_id = ?", (group_id,)
+                ).fetchone()[0]
             if remaining > 0:
                 return None
             rows = conn.execute(
                 "SELECT result FROM potatoq_chord_parts WHERE group_id = ? ORDER BY idx", (group_id,)
             ).fetchall()
-            conn.execute("DELETE FROM potatoq_chord_parts WHERE group_id = ?", (group_id,))
-            conn.execute("DELETE FROM potatoq_chords WHERE group_id = ?", (group_id,))
         return [serialization.loads(r[0]) for r in rows]
 
     def revoke(self, task_ids: list[str], expires: float) -> None:
@@ -451,15 +459,16 @@ class SQLiteConsumer(Consumer):
         with self.broker._write(conn):
             conn.execute("UPDATE potatoq_jobs SET state = 1 WHERE state = 0 AND run_at <= ?", (now,))
             for queue in order:
+                token = secrets.randbits(62)
                 row = conn.execute(
-                    "UPDATE potatoq_jobs SET state = 2, deliveries = deliveries + 1, worker = ?, pid = ?, claimed_at = ? "
+                    "UPDATE potatoq_jobs SET state = 2, deliveries = deliveries + 1, worker = ?, pid = ?, token = ?, claimed_at = ? "
                     "WHERE seq = (SELECT seq FROM potatoq_jobs WHERE state = 1 AND queue = ? ORDER BY priority DESC, seq LIMIT 1) "
                     "RETURNING id, deliveries, payload",
-                    (self.worker_id, self.pid, now, queue),
+                    (self.worker_id, self.pid, token, now, queue),
                 ).fetchall()
                 if row:
                     job_id, deliveries, payload = row[0]
-                    return Delivery(Message.decode(payload), delivery_count=deliveries, handle=(job_id, deliveries))
+                    return Delivery(Message.decode(payload), delivery_count=deliveries, handle=(job_id, token))
         return None
 
     def fetch(self, timeout: float) -> Delivery | None:
@@ -493,40 +502,43 @@ class SQLiteConsumer(Consumer):
     def interrupt(self) -> None:
         self._interrupted = True
 
-    def _delete_fenced(self, conn: sqlite3.Connection, delivery: Delivery) -> int:
-        job_id, deliveries = delivery.handle
-        return conn.execute(
-            "DELETE FROM potatoq_jobs WHERE id = ? AND state = 2 AND deliveries = ?", (job_id, deliveries)
-        ).rowcount
+    def _delete_fenced(self, conn: sqlite3.Connection, delivery: Delivery) -> bool:
+        """False if we no longer own the claim; then nothing else may be written."""
+        job_id, token = delivery.handle
+        return (
+            conn.execute("DELETE FROM potatoq_jobs WHERE id = ? AND state = 2 AND token = ?", (job_id, token)).rowcount
+            > 0
+        )
 
     def complete(self, delivery: Delivery, record: ResultRecord | None, followups: list[Message]) -> None:
         with self.broker._write() as conn:
-            self._delete_fenced(conn, delivery)
+            if not self._delete_fenced(conn, delivery):
+                return
             if record is not None:
                 self.broker._store(conn, record, self.broker.app.conf.result_expires)
             if followups:
                 self.broker._insert(conn, followups)
 
     def retry(self, delivery: Delivery, message: Message, record: ResultRecord | None) -> None:
-        job_id, deliveries = delivery.handle
+        job_id, token = delivery.handle
         now = time.time()
         state = SCHEDULED if message.eta and message.eta > now else READY
         with self.broker._write() as conn:
-            conn.execute(
+            updated = conn.execute(
                 "UPDATE potatoq_jobs SET state = ?, run_at = ?, queue = ?, priority = ?, payload = ?, deliveries = 0, "
-                "worker = NULL, pid = NULL WHERE id = ? AND state = 2 AND deliveries = ?",
-                (state, message.eta or now, message.queue, message.priority, message.encode(), job_id, deliveries),
-            )
-            if record is not None:
+                "worker = NULL, pid = NULL, token = NULL WHERE id = ? AND state = 2 AND token = ?",
+                (state, message.eta or now, message.queue, message.priority, message.encode(), job_id, token),
+            ).rowcount
+            if updated and record is not None:
                 self.broker._store(conn, record, self.broker.app.conf.result_expires)
 
     def requeue(self, delivery: Delivery, count: bool = False) -> None:
-        job_id, deliveries = delivery.handle
+        job_id, token = delivery.handle
         with self.broker._write() as conn:
             conn.execute(
-                "UPDATE potatoq_jobs SET state = 1, worker = NULL, pid = NULL, deliveries = deliveries - ? "
-                "WHERE id = ? AND state = 2 AND deliveries = ?",
-                (0 if count else 1, job_id, deliveries),
+                "UPDATE potatoq_jobs SET state = 1, worker = NULL, pid = NULL, token = NULL, deliveries = deliveries - ? "
+                "WHERE id = ? AND state = 2 AND token = ?",
+                (0 if count else 1, job_id, token),
             )
 
     def dead_letter(
@@ -534,7 +546,8 @@ class SQLiteConsumer(Consumer):
     ) -> None:
         message = delivery.message
         with self.broker._write() as conn:
-            self._delete_fenced(conn, delivery)
+            if not self._delete_fenced(conn, delivery):
+                return
             if followups:
                 self.broker._insert(conn, followups)
             conn.execute(

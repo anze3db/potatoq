@@ -160,7 +160,9 @@ elseif cmd == 'extend' then
 elseif cmd == 'complete' then
   -- id, queue, token, result, ttl, n_followups, followups...
   local id, q, tok = ARGV[3], ARGV[4], ARGV[5]
-  if release(id, q, tok) then redis.call('DEL', jkey(id)) end
+  -- Lost the claim (lease expired and the task was recovered): write nothing.
+  if not release(id, q, tok) then return 0 end
+  redis.call('DEL', jkey(id))
   store_result(id, ARGV[6], ARGV[7])
   enqueue(9, tonumber(ARGV[8]), now_ms())
   return 1
@@ -199,12 +201,11 @@ elseif cmd == 'dead' then
   -- id, queue, token, reason, result, ttl, n_followups, followups...
   local id, q, tok = ARGV[3], ARGV[4], ARGV[5]
   local now = now_ms()
-  if release(id, q, tok) then
-    local jk = jkey(id)
-    redis.call('HDEL', jk, 'tok', 'w', 'pid')
-    redis.call('HSET', jk, 'st', 'dead', 'r', ARGV[6], 'died', now)
-    redis.call('ZADD', P .. ':dead', now, id)
-  end
+  if not release(id, q, tok) then return 0 end
+  local jk = jkey(id)
+  redis.call('HDEL', jk, 'tok', 'w', 'pid')
+  redis.call('HSET', jk, 'st', 'dead', 'r', ARGV[6], 'died', now)
+  redis.call('ZADD', P .. ':dead', now, id)
   store_result(id, ARGV[7], ARGV[8])
   enqueue(10, tonumber(ARGV[9]), now)
   return 1
@@ -253,13 +254,14 @@ elseif cmd == 'revoke' then
 
 elseif cmd == 'chord' then
   -- group_id, index, size, result
+  -- Parts are kept (7 days): a part redelivered after completion (its worker died
+  -- before acking) gets the results again, so the callback is never lost.
   local key = P .. ':chord:' .. ARGV[3]
-  if redis.call('HSETNX', key, ARGV[4], ARGV[6]) == 0 then return false end
+  redis.call('HSETNX', key, ARGV[4], ARGV[6])
   redis.call('PEXPIRE', key, 604800000)
-  if redis.call('HLEN', key) < tonumber(ARGV[5]) then return false end
-  local all = redis.call('HGETALL', key)
-  redis.call('DEL', key)
-  return all
+  local n = redis.call('HLEN', key)
+  if n < tonumber(ARGV[5]) then return false end
+  return redis.call('HGETALL', key)
 
 elseif cmd == 'requeue_dead' then
   local id = ARGV[3]

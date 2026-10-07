@@ -220,7 +220,7 @@ Potatoq acks after the task finishes and only takes work for idle processes.
 Getting Celery to run at all for this comparison took two workarounds:
 `FORKED_BY_MULTIPROCESSING=1`, because the prefork pool fails on macOS with Python 3.13,
 and disabling remote control, because RabbitMQ 4.3 rejects Celery's transient pidbox
-queues. Potatoq needed none. Numbers vary between runs by about ±10%.
+queues. Potatoq needed none. Redis, Postgres and SQLite numbers vary by about ±10% between runs. RabbitMQ numbers swing up to 2× with machine load, because every publish waits for the broker to confirm it.
 
 There is no Rust in the hot path, and that's deliberate. The research
 ([docs/backends.md#rust](docs/backends.md#rust)) found that per-task overhead is

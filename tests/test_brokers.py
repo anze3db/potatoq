@@ -154,7 +154,9 @@ def test_chord_counter_completes_once(broker_app):
     assert backend.chord_part_done("g1", 1, 3, "b") is None  # duplicate delivery
     assert backend.chord_part_done("g1", 0, 3, "a") is None
     assert backend.chord_part_done("g1", 2, 3, {"c": 1}) == ["a", "b", {"c": 1}]
-    assert backend.chord_part_done("g1", 2, 3, {"c": 1}) is None
+    # A part redelivered after completion (its worker died before acking) gets the
+    # results again, so the callback can't be lost; the callback's fixed id dedupes it.
+    assert backend.chord_part_done("g1", 2, 3, {"c": 1}) == ["a", "b", {"c": 1}]
 
 
 def test_periodic_dedup(broker_app):
@@ -208,7 +210,8 @@ def test_queue_sizes_and_purge(broker_app):
 
 
 def test_stale_claim_cannot_ack(broker_app):
-    """A worker whose claim was recovered must not delete the task's new delivery."""
+    """A worker whose claim was recovered must not settle the task's new delivery,
+    nor write results / follow-ups / dead letters for it."""
     app = broker_app
     if app.kind in ("rabbitmq", "memory"):
         pytest.skip("delivery tags are per channel")
@@ -218,7 +221,12 @@ def test_stale_claim_cannot_ack(broker_app):
     d = fetch(c)
     c.requeue(d, count=True)  # as if recovered
     d2 = fetch(c)
-    c.complete(d, None, [])  # stale ack: ignored
+    stale_record = ResultRecord(task_id=m.id, state=states.FAILURE, result="stale")
+    c.complete(d, stale_record if app.backend is c.broker else None, [msg(app, args=("stale",))])  # ignored
+    c.dead_letter(d, "stale", None)  # ignored
+    assert app.broker.dead_letters() == []
+    if app.backend is c.broker:
+        assert app.backend.get_result(m.id).state == states.STARTED
     c.complete(d2, None, [])
     assert fetch(c, 0.3) is None
     c.close()

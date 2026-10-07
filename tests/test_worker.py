@@ -174,3 +174,25 @@ def test_scheduler_runs_once_across_workers(wapp, tmp_path):
     seconds = [round(t["at"]) for t in ticks]
     assert len(ticks) >= 3, w1.output()
     assert len(seconds) - len(set(seconds)) <= 1, seconds  # no double scheduling
+
+
+def test_dead_lettered_crash_keeps_argument_types(wapp, tmp_path):
+    import datetime as dt
+
+    import workerapp
+
+    from potatoq.exceptions import WorkerLostError
+
+    if wapp.kind == "rabbitmq":
+        pytest.skip("RabbitMQ dead-letters through the broker's delivery limit")
+    wapp.conf.task_max_deliveries = 1
+    when = dt.datetime(2026, 1, 2, 3, 4, tzinfo=dt.UTC)
+    w = Worker(wapp, tmp_path, "-c", "1")
+    try:
+        result = workerapp.crash_with.delay(when)
+        with pytest.raises(WorkerLostError):
+            result.get(timeout=30)
+    finally:
+        w.stop()
+    [entry] = wapp.broker.dead_letters()
+    assert entry["message"]["args"] == [when]

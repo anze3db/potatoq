@@ -633,3 +633,28 @@ def test_get_task_logger_import_path():
     from potatoq.utils.log import get_task_logger
 
     assert get_task_logger(__name__).name == f"potatoq.task.{__name__}"
+
+
+def test_scheduler_retries_a_failed_enqueue(memory_app):
+    from datetime import UTC, datetime, timedelta
+
+    from potatoq.worker.scheduler import Scheduler
+
+    @memory_app.task
+    def report():
+        pass
+
+    memory_app.conf.beat_schedule = {"r": {"task": report.name, "schedule": 60.0}}
+    scheduler = Scheduler(memory_app)
+    start = datetime(2026, 1, 1, 0, 0, 30, tzinfo=UTC)
+    scheduler.last_check = start
+    broker = memory_app.broker
+    original = broker.enqueue_periodic
+
+    def flaky(*args, **kwargs):
+        broker.enqueue_periodic = original
+        raise ConnectionError("broker blip")
+
+    broker.enqueue_periodic = flaky
+    assert scheduler.tick(start + timedelta(seconds=40)) == 0  # blip
+    assert scheduler.tick(start + timedelta(seconds=45)) == 1  # retried, not skipped

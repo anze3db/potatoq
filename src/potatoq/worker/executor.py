@@ -257,9 +257,25 @@ def execute(
         # Redelivered after a crash, but the previous attempt got as far as storing a
         # final result: don't run the task again.
         logger.info("Task %s[%s] already finished (%s); skipping redelivery", message.task, message.id, previous.state)
-        if previous.state == states.FAILURE and app.conf.task_dead_letter_failures:
-            return Outcome(DEAD_LETTER, states.FAILURE, reason=previous.traceback or "failed before redelivery")
-        return Outcome(COMPLETE, states.IGNORED, reason="already finished")
+        # The previous attempt may have died between storing the result and enqueueing
+        # its callbacks: rebuild them (their ids are fixed, so brokers dedupe repeats).
+        if previous.state == states.FAILURE:
+            exc = serialization.exception_from_dict(previous.result) if isinstance(previous.result, dict) else None
+            followups = _callbacks(app, message.link_error, (message.id,), message)
+            followups += _chord_followups(app, message, None, exc or Exception("failed"))
+            if app.conf.task_dead_letter_failures:
+                return Outcome(
+                    DEAD_LETTER,
+                    states.FAILURE,
+                    followups=followups,
+                    reason=previous.traceback or "failed before redelivery",
+                )
+            return Outcome(COMPLETE, states.IGNORED, followups=followups, reason="already finished")
+        followups = []
+        if previous.state == states.SUCCESS:
+            followups = _callbacks(app, message.link, (previous.result,), message)
+            followups += _chord_followups(app, message, previous.result, None)
+        return Outcome(COMPLETE, states.IGNORED, followups=followups, reason="already finished")
 
     if task is None:
         exc = NotRegistered(message.task)

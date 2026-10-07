@@ -43,6 +43,11 @@ def crash():
 
 
 @app.task
+def crash_with(value):
+    os._exit(13)
+
+
+@app.task
 def sleep(seconds, tag=None):
     log("sleep-start", tag=tag)
     time.sleep(seconds)

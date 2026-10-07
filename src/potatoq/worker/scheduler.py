@@ -64,6 +64,7 @@ class Scheduler:
         self.app = app
         self.entries = load_entries(app)
         self.last_check = datetime.now(UTC)
+        self.checkpoints: dict[str, datetime] = {}
 
     def __bool__(self) -> bool:
         return bool(self.entries)
@@ -76,17 +77,28 @@ class Scheduler:
     def tick(self, now: datetime | None = None) -> int:
         """Enqueue everything due since the last tick. Returns the number enqueued."""
         now = now or datetime.now(UTC)
-        start = max(self.last_check, datetime.fromtimestamp(now.timestamp() - self.max_catch_up, UTC))
+        floor = datetime.fromtimestamp(now.timestamp() - self.max_catch_up, UTC)
         sent = 0
         for entry in self.entries:
+            # Each entry keeps its own checkpoint, advanced only once its due run was
+            # enqueued: a broker blip delays a run (within max_catch_up) instead of
+            # silently skipping it.
+            start = max(self.checkpoints.setdefault(entry.name, self.last_check), floor)
             try:
                 times = entry.schedule.fire_times_between(start, now)
             except Exception:
                 logger.exception("Scheduler: bad schedule for %s", entry.name)
                 continue
+            ok = True
             for fire_at in times[-1:]:  # never send a backlog of the same entry
-                if self._send(entry, fire_at):
-                    sent += 1
+                try:
+                    if self._send(entry, fire_at):
+                        sent += 1
+                except Exception:
+                    logger.exception("Scheduler: failed to enqueue %s; will retry", entry.name)
+                    ok = False
+            if ok:
+                self.checkpoints[entry.name] = now
         self.last_check = now
         return sent
 
@@ -104,11 +116,7 @@ class Scheduler:
             task = app._task_from_fun(lambda *a, **k: None, name=entry.task, typing=False)
             app.tasks.unregister(entry.task)
         message = task.build_message(list(entry.args), dict(entry.kwargs), **options)
-        try:
-            claimed = app.broker.enqueue_periodic(entry.name, fire_at.timestamp(), message)
-        except Exception:
-            logger.exception("Scheduler: failed to enqueue %s", entry.name)
-            return False
+        claimed = app.broker.enqueue_periodic(entry.name, fire_at.timestamp(), message)
         if claimed:
             logger.info("Scheduler: sending due task %s (%s)", entry.name, entry.task)
         return claimed

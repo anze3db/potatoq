@@ -17,7 +17,6 @@ always safe) and never runs tasks. Its loop:
 from __future__ import annotations
 
 import errno
-import json
 import logging
 import math
 import os
@@ -30,7 +29,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from .. import signals
+from .. import serialization, signals
 from ..brokers.base import Delivery
 from ..exceptions import TimeLimitExceeded, WorkerLostError
 from ..message import Message
@@ -185,6 +184,11 @@ class Supervisor:
             ",".join(self.queues), self.concurrency, self.app.conf.task_time_limit, self.max_tasks_per_child,
             "on" if self.scheduler else "off",
         )  # fmt: skip
+        if not self.consumer.can_settle_foreign and backend is None:
+            logger.warning(
+                "No result backend: tasks killed for exceeding their hard time limit will be redelivered by "
+                "RabbitMQ (up to task_max_deliveries times). Set result_backend to record them as failed instead."
+            )
         tasks = sorted(n for n in self.app.tasks if not n.startswith("potatoq."))
         logger.info("Registered tasks: %s", ", ".join(tasks) or "(none)")
 
@@ -266,7 +270,7 @@ class Supervisor:
         for line in lines:
             if not line:
                 continue
-            event = json.loads(line)
+            event = serialization.loads(line)
             if event["e"] == "start":
                 child.delivery = Delivery(
                     Message.from_dict(event["message"]),
@@ -312,7 +316,13 @@ class Supervisor:
             except Exception:
                 logger.exception("Could not look up tasks of dead child %d", child.pid)
         for delivery in lost:
-            self._handle_lost(child, delivery, code)
+            try:
+                self._handle_lost(child, delivery, code)
+            except Exception:
+                # The broker is unreachable: the task stays claimed by this (dead)
+                # process and is recovered once the broker is back (lease expiry /
+                # recover()); never let it take the supervisor down.
+                logger.exception("Could not recover task %s of dead child %d", delivery.message.id, child.pid)
         if code != 0 and not child.killed_for_timeout and not (self.shutting_down and child.abort_sent):
             logger.error("Child %d exited unexpectedly (code %s)", child.pid, code)
             self._recent_crashes = [t for t in self._recent_crashes if time.monotonic() - t < 10] + [time.monotonic()]
@@ -396,7 +406,10 @@ class Supervisor:
                         pass
                 else:
                     self._read_child(key.data)
-            self._reap()
+            try:
+                self._reap()
+            except Exception:
+                logger.exception("Error while handling exited children")
             now = time.monotonic()
             self._enforce_time_limits(now)
             try:
@@ -450,6 +463,7 @@ class Supervisor:
                 self._kill(child, signal.SIGKILL)
 
     def _finish(self) -> None:
+        self.shutting_down = True  # no respawning from here on
         for child in list(self.children.values()):
             self._kill(child, signal.SIGKILL)
         deadline = time.monotonic() + 5
