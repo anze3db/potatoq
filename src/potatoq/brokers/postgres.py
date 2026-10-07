@@ -268,6 +268,23 @@ class PostgresBroker(Broker):
                         cur.execute("SELECT pg_notify(%s, '')", (_channel(queue),))
             return
 
+        if len(messages) == 1:
+            # The common case (``delay()``): one statement, one round trip. The NOTIFY
+            # rides along in the same (implicit) transaction.
+            message = messages[0]
+            row = self._rows(messages)[0]
+            notify = self.notify and message.eta is None and self._queues_to_notify(messages)
+            if notify:
+                sql = self._sql(
+                    "WITH ins AS (INSERT INTO {jobs} (id, queue, task, state, priority, run_at, payload) "
+                    "VALUES (%s, %s, %s, %s, %s, coalesce(to_timestamp(%s), now()), %s) ON CONFLICT (id) DO NOTHING "
+                    "RETURNING queue) SELECT pg_notify(%s, '') FROM ins"
+                )
+                self._run(lambda conn: conn.execute(sql, (*row, _channel(message.queue))))
+            else:
+                self._run(lambda conn: conn.execute(self._insert_sql, row))
+            return
+
         def _enqueue(conn: psycopg.Connection) -> None:
             with conn.transaction(), conn.cursor() as cur:
                 self._insert(cur, messages)

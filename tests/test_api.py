@@ -503,7 +503,7 @@ def test_get_inside_task_is_refused(memory_app):
 
     result = outer.delay()
     drain(memory_app)
-    with pytest.raises(RuntimeError, match="Never call result.get"):
+    with pytest.raises(RuntimeError, match=r"Never call result\.get"):
         result.get()
 
 

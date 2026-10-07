@@ -193,6 +193,8 @@ class Potatoq:
         unknown = set(options) - Task.OPTION_NAMES
         if unknown:
             raise TypeError(f"Unknown task option(s) for {name}: {', '.join(sorted(unknown))}")
+        if options.get("rate_limit"):
+            logger.warning("Task %s: rate_limit is not enforced yet by Potatoq (accepted for compatibility)", name)
         base = base or self.Task
         if isinstance(base, str):
             base = load_object(base)
