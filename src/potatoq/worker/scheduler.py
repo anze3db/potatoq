@@ -1,0 +1,121 @@
+"""Periodic tasks (``beat_schedule``) without a single ``beat`` process.
+
+Every worker runs the scheduler. Fire times are deterministic (see
+``potatoq.schedules``) and each ``(entry, fire time)`` is enqueued at most once
+through ``Broker.enqueue_periodic`` (a unique row on SQL brokers, ``SET NX`` on Redis,
+a single-active-consumer leader on RabbitMQ). Running zero extra processes and having
+no "two beats double-schedule everything" failure mode are the point.
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
+from zoneinfo import ZoneInfo
+
+from .. import signals
+from ..schedules import BaseSchedule, crontab, maybe_schedule
+
+if TYPE_CHECKING:
+    from ..app import Potatoq
+
+logger = logging.getLogger("potatoq.scheduler")
+
+
+@dataclass
+class Entry:
+    name: str
+    task: str
+    schedule: BaseSchedule
+    args: tuple[Any, ...] = ()
+    kwargs: dict[str, Any] = field(default_factory=dict)
+    options: dict[str, Any] = field(default_factory=dict)
+
+
+def load_entries(app: Potatoq) -> list[Entry]:
+    entries = []
+    tz = ZoneInfo(app.conf.timezone) if app.conf.timezone else UTC
+    for name, spec in (app.conf.beat_schedule or {}).items():
+        schedule = maybe_schedule(spec["schedule"])
+        if isinstance(schedule, crontab) and schedule.tz is None:
+            schedule.tz = tz
+        entries.append(
+            Entry(
+                name=name,
+                task=spec["task"],
+                schedule=schedule,
+                args=tuple(spec.get("args", ())),
+                kwargs=dict(spec.get("kwargs", {})),
+                options=dict(spec.get("options", {})),
+            )
+        )
+    return entries
+
+
+class Scheduler:
+    #: Fire times missed by more than this (e.g. all workers were down) are skipped
+    #: rather than replayed in a burst.
+    max_catch_up = 60.0
+
+    def __init__(self, app: Potatoq):
+        self.app = app
+        self.entries = load_entries(app)
+        self.last_check = datetime.now(UTC)
+
+    def __bool__(self) -> bool:
+        return bool(self.entries)
+
+    def start(self) -> None:
+        signals.beat_init.send(sender=self)
+        for entry in self.entries:
+            logger.info("Scheduler: %s -> %s (%r)", entry.name, entry.task, entry.schedule)
+
+    def tick(self, now: datetime | None = None) -> int:
+        """Enqueue everything due since the last tick. Returns the number enqueued."""
+        now = now or datetime.now(UTC)
+        start = max(self.last_check, datetime.fromtimestamp(now.timestamp() - self.max_catch_up, UTC))
+        sent = 0
+        for entry in self.entries:
+            try:
+                times = entry.schedule.fire_times_between(start, now)
+            except Exception:
+                logger.exception("Scheduler: bad schedule for %s", entry.name)
+                continue
+            for fire_at in times[-1:]:  # never send a backlog of the same entry
+                if self._send(entry, fire_at):
+                    sent += 1
+        self.last_check = now
+        return sent
+
+    def _send(self, entry: Entry, fire_at: datetime) -> bool:
+        app = self.app
+        task = app.tasks.get(entry.task)
+        options = dict(entry.options)
+        if "expires" not in options:
+            # A periodic run that couldn't start before the next one is due is dropped
+            # instead of piling up behind a stuck queue.
+            next_fire = entry.schedule.next_after(fire_at)
+            options["expires"] = max(1.0, next_fire.timestamp() - time.time())
+        options.setdefault("headers", {})["periodic"] = entry.name
+        if task is None:
+            task = app._task_from_fun(lambda *a, **k: None, name=entry.task, typing=False)
+            app.tasks.unregister(entry.task)
+        message = task.build_message(list(entry.args), dict(entry.kwargs), **options)
+        try:
+            claimed = app.broker.enqueue_periodic(entry.name, fire_at.timestamp(), message)
+        except Exception:
+            logger.exception("Scheduler: failed to enqueue %s", entry.name)
+            return False
+        if claimed:
+            logger.info("Scheduler: sending due task %s (%s)", entry.name, entry.task)
+        return claimed
+
+    def seconds_until_next(self, now: datetime | None = None) -> float:
+        now = now or datetime.now(UTC)
+        upcoming = [e.schedule.next_after(now) for e in self.entries]
+        if not upcoming:
+            return 3600.0
+        return max(0.0, (min(upcoming) - now).total_seconds())
