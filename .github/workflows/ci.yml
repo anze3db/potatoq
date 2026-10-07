@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv run ruff check src tests benchmarks
+      - run: uv run ruff format --check src tests benchmarks
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13", "3.14"]
+    services:
+      redis:
+        image: redis:8
+        ports: ["6379:6379"]
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: potatoq_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 5s --health-retries 20
+      rabbitmq:
+        image: rabbitmq:4.3-management
+        ports: ["5672:5672", "15672:15672"]
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping" --health-interval 5s --health-timeout 10s --health-retries 20
+    env:
+      POTATOQ_TEST_POSTGRES: postgresql://postgres:postgres@localhost:5432/potatoq_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - run: uv run --python ${{ matrix.python }} pytest -q
