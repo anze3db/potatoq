@@ -11,13 +11,15 @@ Procrastinate, Oban/River designs). Each backend is implemented with its own nat
 primitives instead of a lowest-common-denominator abstraction.
 
 ```python
-from potatoq import Potatoq          # or: from potatoq import Celery
+from potatoq import Potatoq  # or: from potatoq import Celery
 
-app = Potatoq("proj")                # broker: $POTATOQ_BROKER_URL, your Django DB, or ./potatoq.sqlite3
+app = Potatoq("proj")  # broker: $POTATOQ_BROKER_URL, your Django DB, or ./potatoq.sqlite3
+
 
 @app.task
 def add(x, y):
     return x + y
+
 
 add.delay(2, 2)
 ```
@@ -120,13 +122,14 @@ you need no Redis to get started.
 from django.db import transaction
 from potatoq import shared_task
 
+
 @shared_task
-def send_receipt(order_id):
-    ...
+def send_receipt(order_id): ...
+
 
 with transaction.atomic():
     order = Order.objects.create(...)
-    send_receipt.delay(order.id)   # runs only after COMMIT; never if the transaction rolls back
+    send_receipt.delay(order.id)  # runs only after COMMIT; never if the transaction rolls back
 ```
 
 When the broker is your database, the task row is written inside your transaction:
@@ -141,6 +144,7 @@ Run workers with `potatoq worker` (it reads `DJANGO_SETTINGS_MODULE`) or `python
 ```python
 # Flask: config from app.config, tasks run inside app.app_context()
 from potatoq.contrib.flask import init_app
+
 potatoq = init_app(flask_app)
 
 # FastAPI: non-blocking enqueue and result polling
@@ -150,6 +154,7 @@ value = await result.aget(timeout=10)
 # SQLAlchemy: .delay() inside a session transaction is sent on commit
 # (or written in the transaction when the broker is the same database)
 from potatoq.contrib.sqlalchemy import install
+
 install(app)
 ```
 
@@ -187,9 +192,10 @@ from potatoq.testing import drain
 
 app = Potatoq("tests", broker="memory://", result_backend="broker")
 
+
 def test_signup():
-    signup("ann@example.com")    # calls send_welcome.delay(...)
-    [task] = drain(app)          # runs what was enqueued: serialization, retries and chords included
+    signup("ann@example.com")  # calls send_welcome.delay(...)
+    [task] = drain(app)  # runs what was enqueued: serialization, retries and chords included
     assert task.state == "SUCCESS"
 ```
 

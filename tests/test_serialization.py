@@ -58,3 +58,14 @@ def test_message_round_trip_ignores_unknown_fields():
     data["future_field"] = 1
     assert Message.from_dict(data) == m
     assert Message.decode(m.encode()) == m
+
+
+def test_wire_format_is_compact_and_versioned():
+    import json
+
+    m = Message(task="t", args=[1])
+    wire = json.loads(m.encode())
+    assert set(wire) == {"task", "args", "id", "queue", "enqueued_at", "v"}
+    newer = {**wire, "v": 99}
+    with pytest.raises(ValueError, match="upgrade potatoq"):
+        Message.from_dict(newer)

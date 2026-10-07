@@ -9,6 +9,8 @@ from typing import Any
 
 from . import serialization
 
+#: Bumped only for incompatible changes. Optional new fields don't need a bump:
+#: decoders ignore fields they don't know.
 PROTOCOL_VERSION = 1
 
 
@@ -49,11 +51,24 @@ class Message:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
+    def to_wire(self) -> dict[str, Any]:
+        """Compact form: fields still at their default are omitted, so messages stay
+        small and adding fields later costs nothing on the wire."""
+        data = self.to_dict()
+        return {k: v for k, v in data.items() if k in _ALWAYS or v != _DEFAULTS[k]}
+
     def encode(self) -> str:
-        return serialization.dumps(self.to_dict())
+        return serialization.dumps(self.to_wire())
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Message:
+        version = data.get("v", PROTOCOL_VERSION)
+        if not isinstance(version, int) or version > PROTOCOL_VERSION:
+            raise ValueError(
+                f"Message {data.get('id')} uses protocol v{version}, this worker understands up to "
+                f"v{PROTOCOL_VERSION}: upgrade potatoq on the workers first."
+            )
+        # Unknown fields are ignored: newer producers can add optional fields freely.
         known = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
         return cls(**known)
 
@@ -70,3 +85,22 @@ class Message:
 
     def is_expired(self, now: float | None = None) -> bool:
         return self.expires is not None and (now or time.time()) >= self.expires
+
+
+#: Fields written even when they hold their default value.
+_ALWAYS = frozenset({"task", "id", "v", "queue", "enqueued_at"})
+
+
+def _field_defaults() -> dict[str, Any]:
+    from dataclasses import MISSING, fields
+
+    out: dict[str, Any] = {}
+    for f in fields(Message):
+        if f.default is not MISSING:
+            out[f.name] = f.default
+        elif f.default_factory is not MISSING:
+            out[f.name] = f.default_factory()
+    return out
+
+
+_DEFAULTS = _field_defaults()

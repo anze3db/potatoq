@@ -14,3 +14,4 @@ target/
 *.sqlite3
 *.db
 .context/
+.venv315/

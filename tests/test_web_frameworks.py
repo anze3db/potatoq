@@ -33,6 +33,10 @@ def test_flask_init_app_reads_config_and_pushes_app_context():
 
 
 def test_fastapi_async_enqueue_and_status():
+    import pytest
+
+    # pydantic-core's compiled wheel may not load on brand-new Python releases.
+    pytest.importorskip("fastapi", exc_type=ImportError)
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
