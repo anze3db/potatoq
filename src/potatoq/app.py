@@ -103,6 +103,10 @@ class Potatoq:
         self._autodiscover: list[tuple[Any, str]] = []
         self._finalized = False
         self._pid = os.getpid()
+        self.on_configure = signals.Signal("on_configure")
+        self.on_after_configure = signals.Signal("on_after_configure")
+        self.on_after_finalize = signals.Signal("on_after_finalize")
+        self.on_after_fork = signals.Signal("on_after_fork")
         if task_cls is not None:
             self.Task = load_object(task_cls) if isinstance(task_cls, str) else task_cls
         if config_source is not None:
@@ -259,6 +263,26 @@ class Potatoq:
             for factory in list(_shared_tasks):
                 factory(self)
 
+    def add_periodic_task(
+        self, schedule: Any, sig: Any, args: Any = (), kwargs: Any = (), name: str | None = None, **opts: Any
+    ) -> str:
+        """Celery's ``sender.add_periodic_task(10.0, my_task.s(), name="...")`` idiom."""
+        from .canvas import maybe_signature
+
+        sig = maybe_signature(sig, self)
+        key = name or repr(sig)
+        self.conf.beat_schedule = {
+            **self.conf.beat_schedule,
+            key: {
+                "task": sig.task,
+                "schedule": schedule,
+                "args": tuple(args) or sig.args,
+                "kwargs": dict(kwargs) or sig.kwargs,
+                "options": {**sig.options, **opts},
+            },
+        }
+        return key
+
     def _import_includes(self) -> None:
         for module in (*self.conf.imports, *self.conf.include):
             importlib.import_module(module)
@@ -267,8 +291,13 @@ class Potatoq:
             self._do_autodiscover(packages, related_name)
 
     def loader_import_default_modules(self) -> None:
+        """Import task modules and run configuration hooks (worker / beat startup)."""
         self.finalize()
         self._import_includes()
+        if not getattr(self, "_configured_signals_sent", False):
+            self._configured_signals_sent = True
+            self.on_after_configure.send(sender=self, source=self.conf)
+            self.on_after_finalize.send(sender=self)
 
     def autodiscover_tasks(self, packages: Any = None, related_name: str = "tasks", force: bool = False) -> None:
         """Import ``<package>.tasks`` for each package (Django apps when ``packages`` is None)."""

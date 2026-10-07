@@ -10,13 +10,13 @@ class Command(BaseCommand):
         parser.add_argument("args", nargs="*")
 
     def run_from_argv(self, argv):  # type: ignore[no-untyped-def]
-        from ....app import current_app
-        from ....cli import main
+        from potatoq.app import current_app
+        from potatoq.cli import main
 
         raise SystemExit(main(["-A", current_app(), *argv[2:]]))
 
     def handle(self, *args, **options):  # type: ignore[no-untyped-def]
-        from ....app import current_app
-        from ....cli import main
+        from potatoq.app import current_app
+        from potatoq.cli import main
 
         return str(main(["-A", current_app(), *args]) or "")

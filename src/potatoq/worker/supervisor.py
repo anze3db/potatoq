@@ -358,10 +358,13 @@ class Supervisor:
             outcome = executor.failure_outcome(app, message, exc, self.hostname)
         if consumer.can_settle_foreign:
             executor.settle(app, consumer, delivery, outcome)
-        elif outcome.record is not None and app.backend is not None:
+        else:
             # e.g. RabbitMQ: the broker redelivers by itself; the stored final result
             # makes the redelivered copy a no-op (see executor.execute).
-            app.backend.store_result(outcome.record, expires=app.conf.result_expires)
+            if outcome.record is not None and app.backend is not None:
+                app.backend.store_result(outcome.record, expires=app.conf.result_expires)
+            if outcome.followups:
+                app.publish_now(outcome.followups)
 
     # --- main loop -----------------------------------------------------------------
 
@@ -418,7 +421,7 @@ class Supervisor:
                         if outcome.record is not None and self.app.backend is not None:
                             self.app.backend.store_result(outcome.record, expires=conf.result_expires)
                         if outcome.followups:
-                            self.app.publish(outcome.followups)
+                            self.app.publish_now(outcome.followups)
                 if now >= timers["maintenance"]:
                     timers["maintenance"] = now + random.uniform(45, 75)
                     broker.maintenance()

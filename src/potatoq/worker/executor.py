@@ -26,6 +26,7 @@ from ..exceptions import (
     MaxRetriesExceededError,
     NotRegistered,
     Reject,
+    Replace,
     Retry,
     WorkerTerminate,
 )
@@ -303,6 +304,9 @@ def execute(
         outcome = _on_success(app, task, message, request, retval, store)
     except Retry as exc:
         outcome = _on_retry(app, task, message, request, exc, store)
+    except Replace as exc:
+        followups = signature_to_messages(app, exc.sig, (), message)
+        outcome = Outcome(COMPLETE, states.IGNORED, followups=followups, reason="replaced")
     except Ignore:
         outcome = Outcome(COMPLETE, states.IGNORED)
     except Reject as exc:
@@ -465,12 +469,9 @@ def settle(app: Potatoq, consumer: Any, delivery: Any, outcome: Outcome) -> None
     if record is not None and backend is not None and backend is not consumer.broker:
         backend.store_result(record, expires=app.conf.result_expires)
         record = None
+    # Consumers enqueue follow-ups atomically with the ack (SQL transaction, Redis Lua
+    # script) or publish-then-ack (RabbitMQ), so a crash never loses a callback.
     followups = outcome.followups
-    if followups and not getattr(consumer.broker, "transactional", False):
-        # Non-transactional brokers: publish follow-ups first, then ack, so a crash in
-        # between leads to a duplicate rather than a lost callback.
-        app.publish(followups)
-        followups = []
     action = outcome.action
     if action == COMPLETE and outcome.state == states.FAILURE and app.conf.task_dead_letter_failures:
         action = DEAD_LETTER
@@ -478,7 +479,7 @@ def settle(app: Potatoq, consumer: Any, delivery: Any, outcome: Outcome) -> None
         consumer.complete(delivery, record, followups)
     elif action == RETRY:
         if followups:
-            app.publish(followups)
+            app.publish_now(followups)
         consumer.retry(delivery, outcome.retry_message, record)
     elif action == REQUEUE:
         consumer.requeue(delivery, count=True)

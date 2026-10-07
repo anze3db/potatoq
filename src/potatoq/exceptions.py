@@ -69,6 +69,14 @@ class Ignore(TaskError):
     """Raise from a task to stop processing without recording a state."""
 
 
+class Replace(Ignore):
+    """Raised by ``Task.replace()``; carries the replacement signature."""
+
+    def __init__(self, sig: Any):
+        self.sig = sig
+        super().__init__(sig)
+
+
 class Reject(TaskError):
     """Raise from a task to reject the message (optionally requeueing it)."""
 

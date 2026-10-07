@@ -51,6 +51,10 @@ class Context:
     errbacks: Any = None
     origin: str | None = None
 
+    @property
+    def correlation_id(self) -> str | None:
+        return self.id
+
     def __init__(self, **kwargs: Any):
         self.__dict__.update(kwargs)
 
@@ -517,6 +521,33 @@ class Task:
         return delay
 
     # --- results / state ---------------------------------------------------------
+
+    def replace(self, sig: Any) -> None:
+        """Replace this task with ``sig``, which inherits its id, callbacks and chord.
+
+        The current task ends and the replacement is enqueued atomically with its
+        acknowledgement.
+        """
+        from .canvas import maybe_signature
+        from .exceptions import Replace
+
+        request = self.request
+        if request.called_directly or request.message is None:
+            raise RuntimeError("replace() only works inside a running task")
+        sig = maybe_signature(sig, self.app).clone()
+        message = request.message
+        sig.set(task_id=request.id)
+        if message.link:
+            sig["options"]["link"] = [*sig["options"].get("link", []), *message.link]
+        if message.link_error:
+            sig["options"]["link_error"] = [*sig["options"].get("link_error", []), *message.link_error]
+        if message.chord:
+            sig.set(chord=message.chord, group_id=message.group_id, group_index=message.group_index)
+        raise Replace(sig)
+
+    @property
+    def backend(self) -> Any:
+        return self.app.backend
 
     def AsyncResult(self, task_id: str, **kwargs: Any) -> AsyncResult:
         from .result import AsyncResult

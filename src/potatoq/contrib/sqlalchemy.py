@@ -39,7 +39,7 @@ _installed: set[int] = set()
 def _after_begin(session: Session, transaction: Any, connection: Any) -> None:
     current = _sessions.get()
     if not any(ref() is session for ref in current):
-        _sessions.set(tuple(r for r in current if r() is not None) + (weakref.ref(session),))
+        _sessions.set((*tuple(r for r in current if r() is not None), weakref.ref(session)))
 
 
 def _after_commit(session: Session) -> None:
@@ -55,7 +55,7 @@ def _after_rollback(session: Session) -> None:
 def _current_session(using: Any) -> Session | None:
     if isinstance(using, Session):
         return using if using.in_transaction() else None
-    if using is not None and hasattr(using, "registry") and hasattr(using, "__call__"):  # scoped_session
+    if using is not None and hasattr(using, "registry") and callable(using):  # scoped_session
         session = using()
         return session if session.in_transaction() else None
     for ref in reversed(_sessions.get()):

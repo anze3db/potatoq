@@ -570,3 +570,66 @@ def test_obsolete_celery_settings_are_accepted():
         accept_content=["json"],
     )
     assert app.conf.task_serializer == "json"
+
+
+def test_add_periodic_task_via_on_after_configure(memory_app):
+    from potatoq import crontab
+
+    @memory_app.task
+    def report():
+        pass
+
+    @memory_app.on_after_configure.connect
+    def setup_periodic_tasks(sender, **kwargs):
+        sender.add_periodic_task(10.0, report.s(), name="every 10s")
+        sender.add_periodic_task(crontab(minute=0), report.s(), name="hourly", expires=60)
+
+    memory_app.loader_import_default_modules()
+    schedule = memory_app.conf.beat_schedule
+    assert schedule["every 10s"]["task"] == report.name
+    assert schedule["hourly"]["options"] == {"expires": 60}
+
+
+def test_scheduler_enqueues_due_entries_once(memory_app):
+    from datetime import UTC, datetime, timedelta
+
+    from potatoq.worker.scheduler import Scheduler
+
+    @memory_app.task
+    def report():
+        pass
+
+    memory_app.conf.beat_schedule = {"r": {"task": report.name, "schedule": 60.0}}
+    scheduler = Scheduler(memory_app)
+    start = datetime(2026, 1, 1, 0, 0, 30, tzinfo=UTC)
+    scheduler.last_check = start
+    assert scheduler.tick(start + timedelta(seconds=40)) == 1
+    other = Scheduler(memory_app)  # a second worker's scheduler
+    other.last_check = start
+    assert other.tick(start + timedelta(seconds=40)) == 0
+    assert memory_app.broker.queue_sizes() == {"default": 1}
+
+
+def test_replace(memory_app):
+    @memory_app.task
+    def final(x):
+        return x * 10
+
+    @memory_app.task(bind=True)
+    def first(self, x):
+        self.replace(final.s(x + 1))
+
+    @memory_app.task
+    def after(x):
+        return x + 1
+
+    result = (first.s(1) | after.s()).delay()
+    drained = drain(memory_app)
+    assert [d.name.rsplit(".", 1)[-1] for d in drained] == ["first", "final", "after"]
+    assert result.get() == 21
+
+
+def test_get_task_logger_import_path():
+    from potatoq.utils.log import get_task_logger
+
+    assert get_task_logger(__name__).name == f"potatoq.task.{__name__}"

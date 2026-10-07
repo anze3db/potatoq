@@ -86,6 +86,10 @@ def build_parser() -> argparse.ArgumentParser:
     w.add_argument("--time-limit", type=float)
     w.add_argument("--soft-time-limit", type=float)
     w.add_argument("--pidfile")
+    w.add_argument("--autoscale", help="(Celery compat, ignored) use -c")
+    w.add_argument(
+        "--prefetch-multiplier", type=int, help="(Celery compat, ignored) prefetch is always one task per idle process"
+    )
     for flag in IGNORED_FLAGS:
         w.add_argument(flag, action="store_true", help=argparse.SUPPRESS)
 
@@ -121,6 +125,10 @@ def build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("result", help="Show a task result")
     r.add_argument("task_id")
     r.add_argument("--wait", type=float, default=None, help="Seconds to wait for it")
+
+    i = sub.add_parser("inspect", help="Inspect live workers: active, registered, stats, ping, active_queues")
+    i.add_argument("what", choices=["active", "registered", "stats", "ping", "active_queues", "scheduled", "reserved"])
+    i.add_argument("-d", "--destination")
 
     sub.add_parser("migrate", help="Create the broker schema (tables/queues)")
     rv = sub.add_parser("revoke", help="Revoke tasks that haven't started")
@@ -335,6 +343,16 @@ def cmd_result(app: Potatoq, args: argparse.Namespace) -> int:
     print(f"{result.state}: {value!r}")
     if result.traceback:
         print(result.traceback)
+    return 0
+
+
+def cmd_inspect(app: Potatoq, args: argparse.Namespace) -> int:
+    destination = args.destination.split(",") if args.destination else None
+    replies = getattr(app.control.inspect(destination=destination), args.what)()
+    if not replies:
+        print("Error: No nodes replied.")
+        return 1
+    print(json.dumps(replies, indent=2, default=str))
     return 0
 
 
