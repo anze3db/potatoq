@@ -2,6 +2,10 @@
 
 potatoq needs Python 3.11 or newer. 3.11 – 3.15 are tested, including the free-threaded 3.14t and 3.15t builds.
 
+!!! warning "Alpha"
+    potatoq is alpha software: use it in production at your own risk for now. APIs and
+    defaults may still change between releases.
+
 !!! warning "Linux and macOS only"
     Windows isn't supported: workers rely on `fork()`, POSIX signals and `setitimer`, the
     same as Celery's default pool. On Windows, run potatoq under

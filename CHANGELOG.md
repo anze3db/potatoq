@@ -11,6 +11,8 @@ next release. Everything else is generated from pull request titles by
 ## Unreleased
 
 The first release of potatoq: a Celery-compatible task queue with production-ready defaults.
+**This is an alpha release**: use it in production at your own risk, and expect APIs and
+defaults to change while potatoq matures.
 
 - **Celery-compatible API**: `Potatoq` (also importable as `Celery`), `@app.task`,
   `@shared_task`, `delay`/`apply_async`, `AsyncResult`, `chain`/`group`/`chord`,
