@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import os
+import weakref
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
@@ -34,6 +35,8 @@ logger = logging.getLogger("potatoq.django")
 default_app_config = "potatoq.contrib.django.apps.PotatoqConfig"
 
 _INHERITED: list[Any] = []
+#: Apps ``install()`` has run for.
+_INSTALLED: weakref.WeakSet[Potatoq] = weakref.WeakSet()
 
 
 def _settings() -> Any:
@@ -107,29 +110,35 @@ def configure_app(app: Potatoq) -> None:
     install(app)
 
 
-def install(app: Potatoq) -> None:
-    """Hook Potatoq into Django's transactions and connection handling (idempotent)."""
+def install(app: Potatoq, *, bind_backends: bool = True) -> None:
+    """Hook Potatoq into Django's transactions and connection handling (idempotent).
+
+    ``django.tasks`` backends without an ``APP`` option that aren't bound to an app yet
+    run on ``app``, unless ``bind_backends`` is false."""
     from ... import signals
 
     app.add_transaction_hook(DjangoTransactionHook())
-    _bind_task_backends(app)
+    _bind_task_backends(app, bind_backends)
     if not getattr(install, "_signals_connected", False):
         signals.task_prerun.connect(_close_old_connections, weak=False, dispatch_uid="potatoq.django.prerun")
         signals.task_postrun.connect(_close_old_connections, weak=False, dispatch_uid="potatoq.django.postrun")
         signals.worker_init.connect(_close_all, weak=False, dispatch_uid="potatoq.django.worker_init")
         signals.worker_process_init.connect(_drop_inherited, weak=False, dispatch_uid="potatoq.django.process_init")
         install._signals_connected = True  # type: ignore[attr-defined]
-    app.autodiscover_tasks()
+    if app not in _INSTALLED:
+        _INSTALLED.add(app)
+        app.autodiscover_tasks()
 
 
-def _bind_task_backends(app: Potatoq) -> None:
+def _bind_task_backends(app: Potatoq, bind_backends: bool = True) -> None:
     """Initialise ``django.tasks`` backends that run on potatoq (TASKS setting), so a
     worker can resolve Django tasks by name even if nothing else touched them."""
     try:
         from django.tasks import task_backends
     except ImportError:  # pragma: no cover - Django < 6 (dev and CI use Django 6)
         return
-    from .tasks import PotatoqBackend
+    from ...config import load_object
+    from .tasks import PotatoqBackend, _default_apps
 
     for alias in getattr(_settings(), "TASKS", None) or {}:
         try:
@@ -137,7 +146,19 @@ def _bind_task_backends(app: Potatoq) -> None:
         except Exception:
             logger.exception("Could not load django.tasks backend %r", alias)
             continue
-        if isinstance(backend, PotatoqBackend) and not backend.options.get("APP"):
+        if not isinstance(backend, PotatoqBackend):
+            continue
+        target = backend.options.get("APP")
+        if target:
+            try:
+                target = load_object(target) if isinstance(target, str) else target
+            except Exception:
+                # E.g. its module is still being imported; a later install() binds it.
+                logger.debug("Could not load APP %r of django.tasks backend %r", target, alias, exc_info=True)
+                continue
+            if target is app:
+                backend.bind(app)
+        elif bind_backends and alias not in _default_apps:
             backend.bind(app)
 
 

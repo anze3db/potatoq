@@ -173,6 +173,75 @@ def test_real_worker_runs_django_tasks(django_env, tmp_path):
         out.close()
 
 
+@pytest.mark.parametrize("tasks_app", [None, "djangoproj.celery:app"], ids=["default-app", "app-option"])
+def test_real_worker_with_a_celery_py_app(django_env, tmp_path, tasks_app):
+    """`potatoq -A djangoproj.celery:app worker`, the documented celery.py pattern: the CLI
+    sets Django up once the module set DJANGO_SETTINGS_MODULE, so django.tasks (also with
+    OPTIONS["APP"] naming that app) and @shared_task tasks both run."""
+    from django.tasks import TaskResultStatus
+    from djangoproj.shop.jobs import total
+    from djangoproj.shop.tasks import audit
+
+    env = {**os.environ, "PYTHONPATH": str(TESTS)}
+    env.pop("DJANGO_SETTINGS_MODULE")  # set by djangoproj/celery.py
+    if tasks_app:
+        env["TEST_DJANGO_TASKS_APP"] = tasks_app
+    out = open(tmp_path / "worker.log", "w")
+    worker = subprocess.Popen(
+        [sys.executable, "-m", "potatoq.cli", "-A", "djangoproj.celery:app", "worker", "-Q", "shop", "-c", "1"],
+        env=env, cwd=TESTS, stdout=out, stderr=subprocess.STDOUT,
+    )  # fmt: skip
+    try:
+        result = total.enqueue(5, [1, 2])
+        plain = audit.delay("logged")
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            result.refresh()
+            if result.is_finished:
+                break
+            time.sleep(0.1)
+        assert result.status == TaskResultStatus.SUCCESSFUL, (tmp_path / "worker.log").read_text()
+        assert result.return_value == {"order": 5, "total": 3}
+        assert plain.get(timeout=30) == "logged"
+    finally:
+        worker.terminate()
+        worker.wait(30)
+        out.close()
+
+
+def test_a_task_module_failing_to_import_is_dead_lettered(django_env, monkeypatch, caplog):
+    """An installed app's module raising on import fails the message, not the worker."""
+    from potatoq.contrib.django import tasks as dj_tasks
+    from potatoq.message import Message
+    from potatoq.worker import executor
+
+    def broken(path):
+        raise RuntimeError("import-time failure")
+
+    monkeypatch.setattr(dj_tasks, "import_string", broken)
+    message = Message(task="djangoproj.shop.broken.job", args=[], kwargs={}, queue="shop")
+    outcome = executor.execute(django_env, message, hostname="test")
+    assert (outcome.action, outcome.state) == (executor.DEAD_LETTER, "FAILURE")
+    assert outcome.reason == "unregistered task djangoproj.shop.broken.job"
+    assert "Could not import djangoproj.shop.broken.job" in caplog.text
+    assert "import-time failure" in caplog.text
+
+
+def test_resolver_before_django_setup_finds_nothing(django_env, monkeypatch):
+    """Without django.setup() (AppRegistryNotReady), the message is dead-lettered as unregistered."""
+    from django.apps import apps
+    from django.tasks import task_backends
+
+    from potatoq.message import Message
+    from potatoq.worker import executor
+
+    monkeypatch.setattr(apps, "ready", False)
+    assert task_backends["default"]._resolve("djangoproj.shop.jobs.total") is None
+    message = Message(task="djangoproj.shop.jobs.not_imported_yet", args=[], kwargs={}, queue="shop")
+    outcome = executor.execute(django_env, message, hostname="test")
+    assert outcome.action == executor.DEAD_LETTER
+
+
 @pytest.mark.skipif(django.VERSION < (6, 1), reason="Django 6.1 forwards @task(**options)")
 def test_django_61_task_options_reach_potatoq(django_env):
     from djangoproj.shop.jobs import with_options

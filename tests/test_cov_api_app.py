@@ -235,6 +235,24 @@ def test_resolve_task_uses_resolvers(memory_app):
     assert memory_app.resolve_task("unknown") is None
 
 
+def test_a_failing_resolver_doesnt_crash_the_worker(memory_app, caplog):
+    """The executor (and with it a worker child) never sees a resolver's exception: the
+    message is dead-lettered as unregistered."""
+    from potatoq.message import Message
+    from potatoq.worker import executor
+
+    def broken(name):
+        raise LookupError("registry not ready")
+
+    memory_app._task_resolvers.append(broken)
+    memory_app._task_resolvers.append(lambda name: memory_app.tasks["potatoq.accumulate"] if name == "later" else None)
+    with caplog.at_level(logging.ERROR, logger="potatoq"):
+        assert memory_app.resolve_task("later") is memory_app.tasks["potatoq.accumulate"]  # next resolver still asked
+        outcome = executor.execute(memory_app, Message(task="nowhere", args=[], kwargs={}), hostname="test")
+    assert (outcome.action, outcome.reason) == (executor.DEAD_LETTER, "unregistered task nowhere")
+    assert "Task resolver" in caplog.text and "registry not ready" in caplog.text
+
+
 def test_missing_task_placeholder_raises():
     with pytest.raises(NotImplementedError):
         _missing_task(1, x=2)

@@ -19,5 +19,7 @@ TASKS = {
     "default": {
         "BACKEND": "potatoq.contrib.django.tasks.PotatoqBackend",
         "QUEUES": ["shop", "default", "emails"],
+        # Worker tests run the backend on an explicit app ("module:attribute").
+        "OPTIONS": {"APP": os.environ["TEST_DJANGO_TASKS_APP"]} if os.environ.get("TEST_DJANGO_TASKS_APP") else {},
     }
 }

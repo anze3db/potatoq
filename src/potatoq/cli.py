@@ -25,11 +25,28 @@ def find_app(spec: str | Potatoq | None) -> Potatoq:
         return spec
     sys.path.insert(0, os.getcwd())
     if not spec:
-        if os.environ.get("DJANGO_SETTINGS_MODULE"):
-            import django
-
-            django.setup()
+        _setup_django()
         return current_app()
+    app = _import_app(spec)
+    # After the import: a celery.py-style module sets DJANGO_SETTINGS_MODULE itself.
+    _setup_django()
+    return app
+
+
+def _setup_django() -> None:
+    """``django.setup()`` for a Django project (DJANGO_SETTINGS_MODULE) not set up yet."""
+    if not os.environ.get("DJANGO_SETTINGS_MODULE"):
+        return
+    try:
+        import django
+        from django.apps import apps
+    except ImportError:
+        return
+    if not apps.ready:
+        django.setup()
+
+
+def _import_app(spec: str) -> Potatoq:
     module_name, _, attr = spec.partition(":")
     module = importlib.import_module(module_name)
     if attr:

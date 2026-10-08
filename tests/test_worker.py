@@ -27,6 +27,7 @@ class Worker:
             "TEST_LOG": str(tmp_path / "events.jsonl"),
             "PYTHONPATH": str(TESTS),
         }
+        env.pop("DJANGO_SETTINGS_MODULE", None)  # left by the Django tests; workerapp isn't Django
         self.out = open(tmp_path / f"worker-{time.monotonic_ns()}.log", "w")
         self.proc = subprocess.Popen(
             [sys.executable, "-m", "potatoq.cli", "-A", "workerapp", "worker", "-l", "info", *args],

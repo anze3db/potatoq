@@ -234,12 +234,17 @@ class Potatoq:
 
     def resolve_task(self, name: str) -> BaseTask | None:
         """The registered task ``name``, or one an integration can load on demand
-        (e.g. a ``django.tasks`` task whose module the worker hasn't imported yet)."""
+        (e.g. a ``django.tasks`` task whose module the worker hasn't imported yet).
+        A failing resolver counts as not finding it: workers call this for every message."""
         task = self.tasks.get(name)
         if task is not None:
             return task
         for resolver in self._task_resolvers:
-            task = resolver(name)
+            try:
+                task = resolver(name)
+            except Exception:
+                logger.exception("Task resolver %r failed for %r", resolver, name)
+                continue
             if task is not None:
                 return task
         return None

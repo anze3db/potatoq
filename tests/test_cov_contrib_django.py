@@ -175,7 +175,9 @@ def test_app_config_ready_configures_an_explicit_app(django_env):
         apps.get_app_config("potatoq").ready()
         assert other.conf.task_default_queue == "shop"
         assert other.conf.broker_url == django_env.conf.broker_url
-        assert task_backends["default"]._app is other  # django.tasks run on the configured app
+        # django.tasks stay on the app configured first, in every thread.
+        assert task_backends["default"].app is django_env
+        assert other._task_resolvers == []
     finally:
         task_backends["default"]._app = None
         django_env.set_current()
@@ -248,3 +250,105 @@ def test_get_result_for_revoked_and_odd_failures(django_env):
             backend.get_result(plain.id)
     finally:
         app.broker.purge("shop")
+
+
+@pytest.fixture
+def second_backend(django_env, monkeypatch):
+    """A second django.tasks backend, "second", running on its own app (OPTIONS["APP"])."""
+    from django.conf import settings
+    from django.tasks import task_backends
+
+    from potatoq import Potatoq
+    from potatoq.contrib.django import tasks as dj_tasks
+
+    other = Potatoq("second-app", broker="memory://", set_as_current=False)
+    other.conf.result_backend = "broker"
+    backends = {
+        **settings.TASKS,
+        "second": {"BACKEND": "potatoq.contrib.django.tasks.PotatoqBackend", "QUEUES": ["shop"],
+                   "OPTIONS": {"APP": other}},
+    }  # fmt: skip
+    monkeypatch.setattr(settings, "TASKS", backends)
+    monkeypatch.setitem(task_backends.__dict__, "settings", backends)
+    monkeypatch.setattr(dj_tasks, "_resolvers", type(dj_tasks._resolvers)())
+    yield other
+    del task_backends["second"]
+    other.close()
+
+
+@pytest.mark.filterwarnings("ignore:The EMAIL_")
+def test_a_backend_with_its_own_app_leaves_the_others_alone(django_env, second_backend):
+    from django.tasks import task_backends
+    from djangoproj.shop.jobs import total
+
+    other = second_backend
+    on_other = total.using(backend="second").enqueue(1, [1])  # first use: installs `other`
+    assert task_backends["second"].app is other
+    assert other.broker.peek(on_other.id) is not None
+    on_default = total.enqueue(2, [2])
+    assert task_backends["default"].app is django_env
+    assert django_env.broker.peek(on_default.id) is not None
+    assert other.broker.peek(on_default.id) is None
+    other.config_from_object("django.conf:settings")  # configuring it from Django doesn't either
+    assert task_backends["default"].app is django_env
+    django_env.broker.purge("shop")
+
+
+def test_install_registers_resolvers_for_backends_naming_the_app(django_env, second_backend, monkeypatch):
+    """A worker never touches backend.app: install() alone must let it find "second"'s tasks."""
+    import threading
+
+    from django.tasks import task
+    from djangoproj.shop import jobs
+
+    from potatoq.contrib.django import install
+    from potatoq.contrib.django import tasks as dj_tasks
+
+    other = second_backend
+
+    def second_total(items):
+        return sum(items)
+
+    second_total.__module__, second_total.__qualname__ = jobs.__name__, "second_total"
+    monkeypatch.setattr(jobs, "second_total", task(backend="second", queue_name="shop")(second_total), raising=False)
+    # Forget what defining the task did: start like a fresh worker process.
+    other.tasks.unregister("djangoproj.shop.jobs.second_total")
+    other._task_resolvers.clear()
+    dj_tasks._resolvers.clear()
+    install(other)
+    install(other)
+    assert len(other._task_resolvers) == 1
+    assert other.resolve_task("djangoproj.shop.jobs.second_total").name == "djangoproj.shop.jobs.second_total"
+    assert other.resolve_task("djangoproj.shop.jobs.total") is None  # the "default" backend's task
+    # New backend instances (one per thread) add no resolvers and don't install again.
+    autodiscover = list(other._autodiscover)
+    thread = threading.Thread(target=jobs.second_total.enqueue, args=([1],))
+    thread.start()
+    thread.join()
+    assert len(other._task_resolvers) == 1
+    assert other._autodiscover == autodiscover
+
+
+def test_install_skips_unloadable_apps_and_other_backends(django_env, monkeypatch, caplog):
+    from django.conf import settings
+    from django.tasks import task_backends
+
+    from potatoq import Potatoq
+    from potatoq.contrib.django import install
+
+    backends = {
+        "dummy": {"BACKEND": "django.tasks.backends.dummy.DummyBackend"},  # not potatoq's: left alone
+        "broken": {"BACKEND": "potatoq.contrib.django.tasks.PotatoqBackend", "OPTIONS": {"APP": "no_such_mod:app"}},
+    }
+    monkeypatch.setattr(settings, "TASKS", backends)
+    monkeypatch.setitem(task_backends.__dict__, "settings", backends)
+    app = Potatoq("unloadable", broker="memory://", set_as_current=False)
+    try:
+        with caplog.at_level(logging.DEBUG, logger="potatoq.django"):
+            install(app)
+        assert "Could not load APP 'no_such_mod:app' of django.tasks backend 'broken'" in caplog.text
+        assert app._task_resolvers == []
+    finally:
+        del task_backends["broken"]
+        del task_backends["dummy"]
+        app.close()

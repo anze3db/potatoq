@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import signal
 import sys
 import textwrap
@@ -132,13 +133,43 @@ def test_find_app_without_spec_uses_the_current_app(project, monkeypatch, app):
 
 def test_find_app_without_spec_sets_up_django_first(project, monkeypatch, app):
     import django
+    from django.apps import apps
 
     calls = []
     monkeypatch.setenv("DJANGO_SETTINGS_MODULE", "proj.settings")
+    monkeypatch.setattr(apps, "ready", False)
     monkeypatch.setattr(django, "setup", lambda: calls.append("setup"))
     monkeypatch.setattr(cli, "current_app", lambda: calls.append("current_app") or app)
     assert cli.find_app(None) is app
     assert calls == ["setup", "current_app"]
+
+
+def test_find_app_sets_up_django_after_importing_a_celery_py_module(project, monkeypatch):
+    """`-A proj.celery:app`: the module sets DJANGO_SETTINGS_MODULE, then Django is set up."""
+    import django
+    from django.apps import apps
+
+    monkeypatch.setenv("DJANGO_SETTINGS_MODULE", "restored-afterwards")
+    monkeypatch.delenv("DJANGO_SETTINGS_MODULE")
+    name = project(
+        f"{project.unique('celerypy')}.py",
+        "import os\nos.environ.setdefault('DJANGO_SETTINGS_MODULE', 'proj.settings')\n" + APP_SOURCE.format(name="app"),
+    )
+    setups = []
+    monkeypatch.setattr(apps, "ready", False)
+    monkeypatch.setattr(django, "setup", lambda: setups.append(os.environ["DJANGO_SETTINGS_MODULE"]))
+    assert cli.find_app(f"{name}:app") is sys.modules[name].app
+    assert setups == ["proj.settings"]
+    monkeypatch.setattr(apps, "ready", True)
+    cli.find_app(f"{name}:app")
+    assert setups == ["proj.settings"]  # already set up (e.g. `manage.py`): not again
+
+
+def test_find_app_with_django_settings_but_no_django(project, monkeypatch):
+    name = project(f"{project.unique('nodjango')}.py", APP_SOURCE.format(name="app"))
+    monkeypatch.setenv("DJANGO_SETTINGS_MODULE", "proj.settings")
+    monkeypatch.setitem(sys.modules, "django", None)
+    assert cli.find_app(name) is sys.modules[name].app
 
 
 def test_main_imports_the_app_by_name(project, capsys):

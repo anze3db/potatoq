@@ -30,7 +30,9 @@ at-least-once delivery, time limits, retries, dead letters and enqueue-on-commit
 from __future__ import annotations
 
 import inspect
+import logging
 import traceback
+import weakref
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -52,6 +54,14 @@ if TYPE_CHECKING:
     from ...task import Task as PotatoqTaskImpl
 
 __all__ = ["PotatoqBackend", "PotatoqTask", "task"]
+
+logger = logging.getLogger("potatoq.django")
+
+#: The app each backend without an ``APP`` option runs on, by alias. Not kept on the
+#: backend: ``task_backends`` creates a new instance per thread and async context.
+_default_apps: dict[str, Potatoq] = {}
+#: The backend aliases each app has a task resolver for (one per app and alias).
+_resolvers: weakref.WeakKeyDictionary[Potatoq, set[str]] = weakref.WeakKeyDictionary()
 
 _STATUS = {
     states.PENDING: TaskResultStatus.READY,
@@ -156,18 +166,27 @@ class PotatoqBackend(BaseTaskBackend):
     def app(self) -> Potatoq:
         if self._app is None:
             from ...app import current_app
-            from . import install
+            from . import _INSTALLED, install
 
             target = self.options.get("APP")
-            app = (load_object(target) if isinstance(target, str) else target) if target else current_app()
+            if target:
+                app = load_object(target) if isinstance(target, str) else target
+            else:
+                app = _default_apps.get(self.alias) or current_app()
             self.bind(app)
-            install(app)
+            if app not in _INSTALLED:
+                # An app named by an APP option never takes over the other backends.
+                install(app, bind_backends=not target)
         return self._app  # type: ignore[return-value]
 
     def bind(self, app: Potatoq) -> None:
         """Run this backend's tasks on ``app``."""
         self._app = app
-        if self._resolve not in app._task_resolvers:
+        if not self.options.get("APP"):
+            _default_apps[self.alias] = app
+        aliases = _resolvers.setdefault(app, set())
+        if self.alias not in aliases:
+            aliases.add(self.alias)
             app._task_resolvers.append(self._resolve)
 
     @property
@@ -208,12 +227,17 @@ class PotatoqBackend(BaseTaskBackend):
         modules inside INSTALLED_APPS are imported: names come from the broker."""
         from django.apps import apps
 
+        if not apps.ready:  # e.g. a worker whose app module never called django.setup()
+            return None
         module = name.rpartition(".")[0]
         if not any(module == cfg.name or module.startswith(cfg.name + ".") for cfg in apps.get_app_configs()):
             return None
         try:
             obj = import_string(name)
         except (ImportError, AttributeError):
+            return None
+        except Exception:
+            logger.exception("Could not import %s to look for a django.tasks task", name)
             return None
         if isinstance(obj, Task) and obj.backend == self.alias:
             return self._register(obj)
