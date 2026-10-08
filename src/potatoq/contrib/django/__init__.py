@@ -127,7 +127,7 @@ def _bind_task_backends(app: Potatoq) -> None:
     worker can resolve Django tasks by name even if nothing else touched them."""
     try:
         from django.tasks import task_backends
-    except ImportError:  # Django < 6
+    except ImportError:  # pragma: no cover - Django < 6 (dev and CI use Django 6)
         return
     from .tasks import PotatoqBackend
 

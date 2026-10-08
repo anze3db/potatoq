@@ -227,7 +227,8 @@ class AsyncResult:
         return ((self.id, parent.as_tuple() if parent else None), None)
 
     def __reduce__(self) -> Any:
-        return (self.app.AsyncResult, (self.id,))
+        # Apps aren't picklable: unpickle onto the current app, keeping the parents.
+        return (result_from_tuple, (self.as_tuple(),))
 
 
 class EagerResult(AsyncResult):

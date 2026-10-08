@@ -114,3 +114,8 @@ $ potatoq -A proj worker
 ¹ On RabbitMQ, Celery acks before running the task and publishes without waiting for
 confirms. potatoq acks after the task finishes and waits for every publish to be
 confirmed.
+
+---
+
+<small>potatoq was generated with **Claude Opus 5.5** (high effort): the research, design, code, tests and docs.
+Linux and macOS only. MIT licensed.</small>

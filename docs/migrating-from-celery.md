@@ -67,6 +67,8 @@ existing classic queue. Pick new queue names rather than reusing Celery's.
 
 ## 5. Not supported (yet)
 
+The full list of gaps and planned features is in the [wishlist](wishlist.md).
+
 * **gevent and eventlet pools.** `-P solo` runs in-process, and `-P threads -c N` runs N
   threads in one process, as in Celery, but with time limits still enforced
   ([details](guide/workers.md#threads)). `--threads` also combines with several processes.

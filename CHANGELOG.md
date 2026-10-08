@@ -29,4 +29,5 @@ The first release of potatoq: a Celery-compatible task queue with production-rea
   `django.tasks` backend), Flask, FastAPI and SQLAlchemy.
 - `async def` tasks, `potatoq.testing.drain()`, and a `potatoq` CLI with `status`,
   `queues`, `dead` and `inspect`.
-- Python 3.11–3.15, including free-threaded builds.
+- Python 3.11–3.15, including free-threaded builds, on Linux and macOS (Windows isn't supported).
+- Fully typed (`mypy` clean, ships `py.typed`), 100% test coverage, MIT licensed.

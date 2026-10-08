@@ -1,6 +1,12 @@
 # Installation
 
-potatoq needs Python 3.11 or newer. 3.11 – 3.15 are tested, including the free-threaded 3.14t and 3.15t builds. The core has no
+potatoq needs Python 3.11 or newer. 3.11 – 3.15 are tested, including the free-threaded 3.14t and 3.15t builds.
+
+!!! warning "Linux and macOS only"
+    Windows isn't supported: workers rely on `fork()`, POSIX signals and `setitimer`, the
+    same as Celery's default pool. On Windows, run potatoq under
+    [WSL](https://learn.microsoft.com/windows/wsl/) or in a Linux container.
+ The core has no
 dependencies; each broker's client library is an optional extra.
 
 === "uv"

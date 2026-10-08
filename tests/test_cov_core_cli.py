@@ -1,0 +1,479 @@
+"""The ``potatoq`` command line, driven in-process through ``potatoq.cli.main``."""
+
+from __future__ import annotations
+
+import json
+import logging
+import signal
+import sys
+import textwrap
+import types
+import uuid
+from pathlib import Path
+
+import pytest
+
+from potatoq import Potatoq, cli
+from potatoq.brokers.sqlite import SQLiteBroker
+from potatoq.testing import drain
+from potatoq.worker import supervisor
+
+
+@pytest.fixture(autouse=True)
+def _restore_logging():
+    """The solo worker and beat configure logging; undo it after each test."""
+    root = logging.getLogger()
+    handlers = {h: list(h.filters) for h in root.handlers}
+    levels = {name: logging.getLogger(name).level for name in (None, "potatoq", "pika")}
+    yield
+    for handler, filters in handlers.items():
+        handler.filters[:] = filters
+    for name, level in levels.items():
+        logging.getLogger(name).setLevel(level)
+
+
+@pytest.fixture
+def app():
+    app = Potatoq("cli-tests", broker="memory://", set_as_current=False)
+    app.conf.result_backend = "broker"
+    yield app
+    app.close()
+
+
+def run(app, *argv):
+    return cli.main(["-A", app, *argv])
+
+
+# --- finding the app ------------------------------------------------------------
+
+
+@pytest.fixture
+def project(tmp_path, monkeypatch):
+    """A scratch directory on sys.path; returns a helper that writes modules into it."""
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.chdir(tmp_path)
+    created: list[str] = []
+
+    def write(relpath: str, source: str) -> str:
+        path = tmp_path / relpath
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(textwrap.dedent(source))
+        created.append(relpath.split("/")[0].removesuffix(".py"))
+        return created[-1]
+
+    write.unique = lambda prefix: f"{prefix}_{uuid.uuid4().hex[:8]}"  # type: ignore[attr-defined]
+    yield write
+    for name in list(sys.modules):
+        if name.split(".")[0] in created:
+            del sys.modules[name]
+
+
+APP_SOURCE = "from potatoq import Potatoq\n{name} = Potatoq('found', broker='memory://', set_as_current=False)\n"
+
+
+def test_find_app_returns_an_instance_unchanged(app):
+    assert cli.find_app(app) is app
+
+
+def test_find_app_looks_for_app_potatoq_or_celery_attributes(project):
+    for attr in ("app", "potatoq", "celery"):
+        name = project(f"{project.unique('mod')}.py", APP_SOURCE.format(name=attr))
+        assert cli.find_app(name) is getattr(sys.modules[name], attr)
+
+
+def test_find_app_with_module_and_attribute(project):
+    name = project(
+        f"{project.unique('factory')}.py",
+        """
+        from potatoq import Potatoq
+
+        def create_app():
+            return Potatoq("from-factory", broker="memory://", set_as_current=False)
+
+        class holder:
+            app = Potatoq("nested", broker="memory://", set_as_current=False)
+        """,
+    )
+    assert cli.find_app(f"{name}:create_app").main == "from-factory"  # factories are called
+    assert cli.find_app(f"{name}:holder.app") is sys.modules[name].holder.app
+
+
+def test_find_app_looks_in_the_celery_submodule_of_a_package(project):
+    pkg = project.unique("proj")
+    project(f"{pkg}/__init__.py", "")
+    project(f"{pkg}/celery.py", APP_SOURCE.format(name="app"))
+    assert cli.find_app(pkg) is sys.modules[f"{pkg}.celery"].app
+
+
+def test_find_app_reports_broken_submodule_imports(project):
+    pkg = project.unique("broken")
+    project(f"{pkg}/__init__.py", "")
+    project(f"{pkg}/potatoq.py", "import a_module_that_does_not_exist_xyz\n")
+    with pytest.raises(ModuleNotFoundError, match="a_module_that_does_not_exist_xyz"):
+        cli.find_app(pkg)
+
+
+def test_find_app_falls_back_to_any_instance_in_the_module(project):
+    name = project(f"{project.unique('anyname')}.py", APP_SOURCE.format(name="my_queue"))
+    assert cli.find_app(name) is sys.modules[name].my_queue
+
+
+def test_find_app_without_an_app_exits_with_a_hint(project):
+    name = project(f"{project.unique('empty')}.py", "x = 1\n")
+    with pytest.raises(SystemExit, match="Pass -A module:attribute"):
+        cli.find_app(name)
+
+
+def test_find_app_without_spec_uses_the_current_app(project, monkeypatch, app):
+    monkeypatch.delenv("DJANGO_SETTINGS_MODULE", raising=False)
+    monkeypatch.setattr(cli, "current_app", lambda: app)
+    assert cli.find_app(None) is app
+
+
+def test_find_app_without_spec_sets_up_django_first(project, monkeypatch, app):
+    import django
+
+    calls = []
+    monkeypatch.setenv("DJANGO_SETTINGS_MODULE", "proj.settings")
+    monkeypatch.setattr(django, "setup", lambda: calls.append("setup"))
+    monkeypatch.setattr(cli, "current_app", lambda: calls.append("current_app") or app)
+    assert cli.find_app(None) is app
+    assert calls == ["setup", "current_app"]
+
+
+def test_main_imports_the_app_by_name(project, capsys):
+    name = project(f"{project.unique('named')}.py", APP_SOURCE.format(name="app"))
+    assert cli.main(["-A", name, "queues"]) == 0
+    assert capsys.readouterr().out == "All queues are empty\n"
+
+
+# --- global options -------------------------------------------------------------
+
+
+def test_global_options_override_configuration(app, tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(Path.cwd())  # restored after the test
+    url = f"sqlite:///{tmp_path}/override.db"
+    assert run(app, "--workdir", str(tmp_path), "-b", url, "--result-backend", "broker", "queues") == 0
+    assert Path.cwd().resolve() == tmp_path.resolve()
+    assert (app.conf.broker_url, app.conf.result_backend) == (url, "broker")
+    assert isinstance(app.broker, SQLiteBroker)
+
+
+def test_worker_is_the_default_command(app, monkeypatch):
+    monkeypatch.setattr(cli, "cmd_worker", lambda app, args: 7)
+    assert run(app) == 7
+
+
+# --- worker ---------------------------------------------------------------------
+
+
+@pytest.fixture
+def fake_supervisor(monkeypatch):
+    captured: dict = {}
+
+    class FakeSupervisor:
+        def __init__(self, app, **kwargs):
+            captured.update(kwargs, app=app)
+
+        def start(self):
+            return 0
+
+    monkeypatch.setattr(supervisor, "Supervisor", FakeSupervisor)
+    return captured
+
+
+def test_worker_options_reach_the_supervisor_and_config(app, fake_supervisor, tmp_path):
+    pidfile = tmp_path / "worker.pid"
+    argv = ["worker", "-c", "3", "-Q", "a,b", "-n", "w1", "-l", "debug", "--max-tasks-per-child", "50"]
+    argv += ["--time-limit", "60", "--soft-time-limit", "50", "--pidfile", str(pidfile), "--no-scheduler"]
+    assert run(app, *argv) == 0
+    assert (app.conf.task_time_limit, app.conf.task_soft_time_limit) == (60.0, 50.0)
+    assert pidfile.read_text() == str(__import__("os").getpid())
+    assert fake_supervisor["concurrency"] == 3
+    assert fake_supervisor["queues"] == "a,b"
+    assert fake_supervisor["hostname"] == "w1"
+    assert fake_supervisor["max_tasks_per_child"] == 50
+    assert fake_supervisor["scheduler"] is False
+
+
+def test_worker_accepts_celery_only_flags(app, fake_supervisor):
+    argv = ["worker", "-B", "-O", "fair", "--autoscale", "10,3", "--prefetch-multiplier", "4", "--without-gossip", "-E"]
+    assert run(app, *argv) == 0
+    assert fake_supervisor["scheduler"] is None  # the scheduler stays on unless --no-scheduler
+
+
+def test_worker_with_unknown_pool_falls_back_to_prefork(app, fake_supervisor, capsys):
+    assert run(app, "worker", "-P", "gevent") == 0
+    assert "pool 'gevent' is not supported; using prefork" in capsys.readouterr().err
+    assert fake_supervisor["app"] is app
+
+
+def test_threads_pool_means_one_process_with_threads(app, fake_supervisor):
+    assert run(app, "worker", "-P", "threads") == 0
+    assert (fake_supervisor["concurrency"], fake_supervisor["threads"]) == (1, 10)
+    assert run(app, "worker", "-P", "THREADS", "-c", "4") == 0
+    assert (fake_supervisor["concurrency"], fake_supervisor["threads"]) == (1, 4)
+
+
+def test_solo_pool_runs_in_process(app, monkeypatch, fake_supervisor):
+    calls = []
+    monkeypatch.setattr(cli, "run_solo", lambda app, args: calls.append(args.hostname) or 0)
+    assert run(app, "worker", "-P", "solo", "-n", "solo1") == 0
+    assert calls == ["solo1"]
+    assert fake_supervisor == {}
+
+
+def test_run_solo_executes_tasks_until_stopped(app, monkeypatch):
+    @app.task(name="cli.add")
+    def add(x, y):
+        return x + y
+
+    result = add.delay(2, 3)
+    handlers: dict = {}
+    monkeypatch.setattr(signal, "signal", lambda sig, handler: handlers.__setitem__(sig, handler))
+    real_consumer = app.broker.consumer
+    seen_workers = []
+
+    def consumer(queues, node_id):
+        inner = real_consumer(queues, node_id)
+        real_fetch = inner.fetch
+
+        def fetch(timeout):
+            delivery = real_fetch(timeout=0)
+            if delivery is None:  # queue drained: what SIGTERM does
+                seen_workers.extend(app.broker.workers())
+                handlers[signal.SIGTERM]()
+            return delivery
+
+        inner.fetch = fetch
+        return inner
+
+    monkeypatch.setattr(app.broker, "consumer", consumer)
+    assert run(app, "worker", "-P", "solo", "-n", "solo-test") == 0
+    assert result.get(timeout=1) == 5
+    assert set(handlers) == {signal.SIGTERM, signal.SIGINT}
+    assert [(w["hostname"], w["concurrency"]) for w in seen_workers] == [("solo-test", 1)]
+    assert app.broker.workers() == []  # unregistered on the way out
+
+
+# --- beat -----------------------------------------------------------------------
+
+
+def _stop_beat_on_sleep(monkeypatch):
+    sleeps = []
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "time", types.SimpleNamespace(sleep=sleep))
+    return sleeps
+
+
+def test_beat_runs_the_scheduler_until_interrupted(app, monkeypatch, caplog):
+    from potatoq import signals
+
+    app.conf.beat_schedule = {"every-minute": {"task": "cli.noop", "schedule": 60.0}}
+    sleeps = _stop_beat_on_sleep(monkeypatch)
+    started = []
+
+    def on_beat_init(sender, **kwargs):
+        started.append(sender)
+
+    signals.beat_init.connect(on_beat_init)
+    try:
+        with caplog.at_level(logging.INFO, logger="potatoq"):
+            assert run(app, "beat") == 0
+    finally:
+        signals.beat_init.disconnect(on_beat_init)
+    assert len(started) == 1
+    assert len(sleeps) == 1 and 0.05 <= sleeps[0] <= 1.0
+    assert "beat_schedule is empty" not in caplog.text
+
+
+def test_beat_warns_when_there_is_nothing_to_schedule(app, monkeypatch, caplog):
+    _stop_beat_on_sleep(monkeypatch)
+    with caplog.at_level(logging.WARNING, logger="potatoq"):
+        assert run(app, "beat") == 0
+    assert "beat_schedule is empty; nothing to do" in caplog.text
+
+
+# --- status / inspect -------------------------------------------------------------
+
+
+def test_status(app, capsys):
+    assert run(app, "status") == 1
+    assert capsys.readouterr().out == "No live workers\n"
+
+    app.broker.heartbeat("w1@host:1", {"hostname": "w1@host", "queues": ["a", "b"], "concurrency": 4, "running": ["t"]})
+    assert run(app, "status") == 0
+    out = capsys.readouterr().out
+    assert out.startswith("w1@host:1: queues=a,b concurrency=4 running=1 heartbeat=0s ago")
+
+    assert run(app, "status", "--json") == 0
+    assert [w["id"] for w in json.loads(capsys.readouterr().out)] == ["w1@host:1"]
+
+
+def test_inspect(app, capsys):
+    @app.task(name="cli.registered")
+    def registered():
+        pass
+
+    assert run(app, "inspect", "ping") == 1
+    assert capsys.readouterr().out == "Error: No nodes replied.\n"
+
+    app.broker.heartbeat("w1@host:1", {"hostname": "w1@host", "queues": ["default"]})
+    app.broker.heartbeat("w2@host:2", {"hostname": "w2@host", "queues": ["other"]})
+    assert run(app, "inspect", "active_queues", "-d", "w2@host") == 0
+    assert json.loads(capsys.readouterr().out) == {"w2@host:2": [{"name": "other"}]}
+    assert run(app, "inspect", "registered") == 0
+    assert json.loads(capsys.readouterr().out)["w1@host:1"] == ["cli.registered"]
+
+
+# --- queues / purge / call / result / revoke ----------------------------------------
+
+
+def test_queues(app, capsys):
+    assert run(app, "queues") == 0
+    assert capsys.readouterr().out == "All queues are empty\n"
+    app.send_task("cli.x", queue="b")
+    app.send_task("cli.x", queue="b")
+    app.send_task("cli.x", queue="a")
+    assert run(app, "queues") == 0
+    assert capsys.readouterr().out == "a: 1\nb: 2\n"
+    assert run(app, "queues", "--json") == 0
+    assert json.loads(capsys.readouterr().out) == {"a": 1, "b": 2}
+
+
+def test_purge_asks_for_confirmation(app, monkeypatch, capsys):
+    app.send_task("cli.x")
+    app.send_task("cli.x", queue="other")
+    monkeypatch.setattr("builtins.input", lambda prompt: "n")
+    assert run(app, "purge") == 1
+    assert app.broker.queue_sizes() == {"default": 1, "other": 1}
+
+    prompts = []
+    monkeypatch.setattr("builtins.input", lambda prompt: prompts.append(prompt) or "y")
+    assert run(app, "purge") == 0
+    assert prompts == ["Delete all waiting tasks in default? [y/N] "]
+    assert capsys.readouterr().out == "default: purged 1 tasks\n"
+
+    assert run(app, "purge", "-f", "-Q", "other,") == 0
+    assert capsys.readouterr().out == "other: purged 1 tasks\n"
+    assert app.broker.queue_sizes() == {}
+
+
+def test_call_and_result(app, capsys):
+    @app.task(name="cli.add")
+    def add(x, y=0):
+        return x + y
+
+    assert run(app, "call", "cli.add", "-a", "[2]", "-k", '{"y": 3}', "-Q", "math", "--countdown", "0") == 0
+    task_id = capsys.readouterr().out.strip()
+    assert app.broker.peek(task_id)[0].queue == "math"
+
+    assert run(app, "result", task_id) == 0
+    assert capsys.readouterr().out == "PENDING: None\n"
+    assert run(app, "result", task_id, "--wait", "0.01") == 1
+    assert capsys.readouterr().out.startswith("PENDING: ")
+
+    drain(app)
+    assert run(app, "result", task_id, "--wait", "1") == 0
+    assert capsys.readouterr().out == "SUCCESS: 5\n"
+
+
+def test_result_shows_the_traceback_of_a_failure(app, capsys):
+    @app.task(name="cli.fail")
+    def fail():
+        raise ValueError("boom")
+
+    result = fail.delay()
+    drain(app)
+    assert run(app, "result", result.id) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("FAILURE: ValueError('boom')\n")
+    assert "Traceback" in out and 'raise ValueError("boom")' in out
+
+
+def test_revoke(app, capsys):
+    first, second = app.send_task("cli.x"), app.send_task("cli.x")
+    assert run(app, "revoke", first.id, second.id) == 0
+    assert capsys.readouterr().out == "Revoked 2 task(s)\n"
+    assert app.broker.queue_sizes() == {}
+    assert first.state == "REVOKED"
+
+
+# --- dead letters ---------------------------------------------------------------
+
+
+def test_dead_letters_list_and_retry(app, capsys):
+    attempts = []
+
+    @app.task(name="cli.flaky")
+    def flaky():
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise RuntimeError("first attempt fails")
+        return "ok"
+
+    assert run(app, "dead", "list") == 0
+    assert capsys.readouterr().out == "No dead-lettered tasks\n"
+
+    result = flaky.delay()
+    drain(app)
+    assert run(app, "dead", "list") == 0
+    line = capsys.readouterr().out
+    assert line.startswith(f"{result.id}  cli.flaky  queue=default  died=")
+    assert line.rstrip().endswith("RuntimeError: first attempt fails")
+
+    assert run(app, "dead", "list", "--json", "--limit", "5") == 0
+    assert [e["id"] for e in json.loads(capsys.readouterr().out)] == [result.id]
+
+    assert run(app, "dead", "retry", result.id, "missing-id") == 0
+    assert capsys.readouterr().out == f"{result.id}: requeued\nmissing-id: not found\n"
+    drain(app)
+    assert result.get(timeout=1) == "ok"
+
+
+def test_dead_letter_without_reason_or_time(app, monkeypatch, capsys):
+    entry = {"id": "abc", "task": "cli.x", "queue": "default", "reason": None, "died_at": None}
+    monkeypatch.setattr(app.broker, "dead_letters", lambda limit: [entry])
+    assert run(app, "dead") == 0  # `dead` alone lists
+    assert capsys.readouterr().out == "abc  cli.x  queue=default  died=?  \n"
+
+
+# --- migrate / shell ------------------------------------------------------------
+
+
+def test_migrate_sets_up_broker_and_separate_result_backend(app, tmp_path, capsys):
+    app.conf.result_backend = f"sqlite:///{tmp_path}/results.db"
+    assert run(app, "migrate") == 0
+    assert capsys.readouterr().out == "Schema is up to date\n"
+    assert isinstance(app.backend, SQLiteBroker)
+    assert (tmp_path / "results.db").exists()
+
+
+def test_shell_exposes_the_app_and_tasks(app, monkeypatch):
+    @app.task(name="proj.tasks.add")
+    def add(x, y):
+        return x + y
+
+    sessions = []
+    monkeypatch.setattr("code.interact", lambda local, banner: sessions.append((local, banner)))
+    assert run(app, "shell") == 0
+    [(namespace, banner)] = sessions
+    assert namespace["app"] is app
+    assert namespace["add"] is app.tasks["proj.tasks.add"]
+    assert not any(name.startswith("potatoq") for name in namespace)
+    assert banner.startswith("potatoq shell (")
+
+
+def test_worker_refuses_to_start_on_windows(monkeypatch):
+    import pytest
+
+    from potatoq import Potatoq, cli
+
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+    app = Potatoq("win", broker="memory://", set_as_current=False)
+    with pytest.raises(SystemExit, match="Windows isn't supported"):
+        cli.main(["-A", app, "worker"])

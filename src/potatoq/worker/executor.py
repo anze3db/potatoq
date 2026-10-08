@@ -10,7 +10,6 @@ transaction: the task's ack, its result and its callbacks commit together.
 from __future__ import annotations
 
 import logging
-import sys
 import threading
 import time
 import traceback as tb
@@ -246,7 +245,6 @@ def execute(
     delivery_count: int = 1,
     hostname: str | None = None,
     is_eager: bool = False,
-    on_start: Any = None,
 ) -> Outcome:
     """Run ``message`` and return what should happen next. Never raises."""
     start = time.monotonic()
@@ -287,10 +285,9 @@ def execute(
                     reason=previous.traceback or "failed before redelivery",
                 )
             return Outcome(COMPLETE, states.IGNORED, followups=followups, reason="already finished")
-        followups = []
-        if previous.state == states.SUCCESS:
-            followups = _callbacks(app, message.link, (previous.result,), message)
-            followups += _chord_followups(app, message, previous.result, None)
+        # READY_STATES minus REVOKED (handled above) and FAILURE: it succeeded.
+        followups = _callbacks(app, message.link, (previous.result,), message)
+        followups += _chord_followups(app, message, previous.result, None)
         return Outcome(COMPLETE, states.IGNORED, followups=followups, reason="already finished")
 
     if task is None:
@@ -307,8 +304,6 @@ def execute(
     request.started_at = time.time()
     task.push_request(**request.__dict__)
     set_current_task(task)
-    if on_start is not None:
-        on_start(task, request)
     retval: Any = None
     try:
         signals.task_prerun.send(sender=task, task_id=message.id, task=task, args=message.args, kwargs=message.kwargs)
@@ -526,7 +521,7 @@ def settle(app: Potatoq, consumer: Any, delivery: Any, outcome: Outcome) -> None
     elif action == DEAD_LETTER:
         reason = outcome.reason or outcome.traceback or (repr(outcome.exc) if outcome.exc else "dead-lettered")
         consumer.dead_letter(delivery, reason, record, followups)
-    else:  # pragma: no cover
+    else:
         raise ValueError(f"Unknown outcome {action}")
 
 
@@ -555,7 +550,3 @@ def execute_eagerly(app: Potatoq, message: Message, throw: bool = True) -> Eager
         return EagerResult(message.id, outcome.exc, states.FAILURE, outcome.traceback, app=app, name=message.task)
     value = outcome.retval if outcome.state == states.SUCCESS else None
     return EagerResult(message.id, value, outcome.state, app=app, name=message.task)
-
-
-def format_exc() -> str:
-    return "".join(tb.format_exception(*sys.exc_info()))

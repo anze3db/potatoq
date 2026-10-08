@@ -41,8 +41,6 @@ def find_app(spec: str | Potatoq | None) -> Potatoq:
         obj = getattr(module, name, None)
         if isinstance(obj, Potatoq):
             return obj
-        if obj is not None and hasattr(obj, "__path__"):
-            continue
     for submodule in ("potatoq", "celery"):
         try:
             sub = importlib.import_module(f"{module_name}.{submodule}")
@@ -168,6 +166,11 @@ def main(argv: list[Any] | None = None) -> int:
 
 
 def cmd_worker(app: Potatoq, args: argparse.Namespace) -> int:
+    if sys.platform == "win32":
+        raise SystemExit(
+            "potatoq workers need fork() and POSIX signals, so Windows isn't supported. "
+            "Run the worker under WSL or in a Linux container."
+        )
     from .worker.supervisor import Supervisor
 
     if args.time_limit:

@@ -11,7 +11,7 @@ import copy
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, Self, cast
 
-from .message import new_id
+from .message import Message, new_id
 
 if TYPE_CHECKING:
     from .app import Potatoq
@@ -238,6 +238,14 @@ def signatures_to_list(value: Any) -> list[dict[str, Any]]:
     return [maybe_signature(v).to_dict() for v in value]  # type: ignore[union-attr]
 
 
+def _splice_chains(tasks: list[Signature]) -> list[Signature]:
+    """``chain(a, chain(b, c), d)`` runs like ``chain(a, b, c, d)``."""
+    out: list[Signature] = []
+    for t in tasks:
+        out.extend(_splice_chains(t.tasks) if isinstance(t, _chain) else [t])
+    return out
+
+
 def _flatten(tasks: Iterable[Any]) -> list[Any]:
     out = []
     for t in tasks:
@@ -269,9 +277,20 @@ class _chain(Signature):
         res = first.apply_async(**{k: v for k, v in options.items() if k not in ("task_id",)})
         return self._last_result(steps) or res
 
+    def clone(self, args: Any = None, kwargs: dict[str, Any] | None = None, **opts: Any) -> _chain:
+        """Partial arguments go to the first step (a parent's result, when linked)."""
+        c = _chain._from_dict(copy.deepcopy(dict(self)), self._app)
+        if args or kwargs:
+            tasks = c.tasks
+            tasks[0] = tasks[0].clone(args, kwargs)
+            c["kwargs"]["tasks"] = tasks
+        if opts:
+            c["options"].update(opts)
+        return c
+
     def _prepare_steps(self, args: Any = None, kwargs: dict[str, Any] | None = None) -> list[Signature]:
         """Clone the steps, upgrade ``group | sig`` to chords, and wire them with links."""
-        raw = [t.clone() for t in self.tasks]
+        raw = [t.clone() for t in _splice_chains(self.tasks)]
         steps: list[Signature] = []
         i = 0
         while i < len(raw):
@@ -292,10 +311,10 @@ class _chain(Signature):
             _link_after(prev, nxt)
         return steps
 
-    def _last_result(self, steps: list[Signature]) -> AsyncResult | None:
+    def _last_result(self, steps: list[Signature]) -> Any:
         last = steps[-1]
         if isinstance(last, group):
-            return None
+            return self.app.GroupResult(last.id, [self.app.AsyncResult(t.id) for t in last.tasks])  # type: ignore[arg-type]
         if isinstance(last, _chord):
             return self.app.AsyncResult(last.body.id)  # type: ignore[arg-type]
         return self.app.AsyncResult(last.id)  # type: ignore[arg-type]
@@ -309,12 +328,7 @@ class _chain(Signature):
                 step = step.clone(args, kwargs)
             elif last is not None:
                 step = step.clone((last.get(),))
-            res = step.apply(**options)
-            if isinstance(res, list):  # group
-                last = _EagerList(res)
-            else:
-                last = res
-            result = last
+            last = result = step.apply(**options)
         return result
 
     def __or__(self, other: Any) -> Any:
@@ -328,22 +342,14 @@ class _chain(Signature):
         return " | ".join(repr(t) for t in self.tasks)
 
 
-class _EagerList(list):
-    def get(self, **kwargs: Any) -> list[Any]:
-        return [r.get(**kwargs) for r in self]
-
-
 #: ``chain(a.s(), b.s(), c.s())`` runs a, then b(a_result), then c(b_result).
 chain = _chain
 
 
 def _link_after(prev: Signature, nxt: Signature) -> None:
+    # Never a group: _prepare_steps turns a group followed by a step into a chord.
     if isinstance(prev, _chord):
         prev.body.link(nxt)
-    elif isinstance(prev, group):
-        # A group followed by something is converted to a chord in _prepare_steps;
-        # a trailing group needs no link.
-        raise ValueError("group must be followed by a task to form a chord")
     else:
         prev.link(nxt)
 
@@ -380,10 +386,6 @@ class group(Signature):
         self["kwargs"]["tasks"] = tasks
         return self.app.GroupResult(gid, [self.app.AsyncResult(t.id) for t in tasks])  # type: ignore[arg-type]
 
-    @property
-    def id(self) -> str | None:
-        return self["options"].get("task_id")
-
     def clone(self, args: Any = None, kwargs: dict[str, Any] | None = None, **opts: Any) -> group:
         g = group._from_dict(copy.deepcopy(dict(self)), self._app)
         if args or kwargs:
@@ -398,7 +400,15 @@ class group(Signature):
         g = self.clone(args, kwargs)
         result = g.freeze()
         messages = []
-        for t in g.tasks:
+        results = []
+        for index, t in enumerate(g.tasks):
+            if not _is_plain(t):
+                # A chain (or nested canvas) as a member: its last step is the member.
+                assert result.id is not None  # set by freeze()
+                first, last_id = _expand_member(t, group_id=result.id, index=index)
+                messages += _messages_for(self.app, first)
+                results.append(self.app.AsyncResult(last_id))
+                continue
             task = self.app.tasks[t.task]
             targs, tkwargs, topts = t._merge(None, None, options)
             topts["task_id"] = t.id
@@ -407,8 +417,10 @@ class group(Signature):
                     list(targs), tkwargs, **{k: v for k, v in topts.items() if k != "task_id"}, task_id=t.id
                 )
             )
+            results.append(self.app.AsyncResult(t.id))  # type: ignore[arg-type]
         if messages:
             self.app.publish(messages)
+        result.results = results
         return result
 
     def __call__(self, *partial_args: Any, **options: Any) -> GroupResult:
@@ -496,7 +508,16 @@ class _chord(Signature):
         size = len(header)
         gid = c["options"]["group_id"]
         messages = []
+        header_ids = []
         for t in header:
+            if not _is_plain(t):
+                first, last_id = _expand_member(
+                    t, group_id=gid, index=t["options"]["group_index"], chord={"callback": callback, "size": size}
+                )
+                messages += _messages_for(self.app, first)
+                header_ids.append(last_id)
+                continue
+            header_ids.append(str(t.id))
             task = self.app.tasks[t.task]
             targs, tkwargs, topts = t._merge(None, None, options)
             tid = topts.pop("task_id")
@@ -511,7 +532,7 @@ class _chord(Signature):
         self.app.publish(messages)
         from .result import GroupResult
 
-        result.parent = GroupResult(gid, [self.app.AsyncResult(t.id) for t in header], app=self.app)  # type: ignore[arg-type]
+        result.parent = GroupResult(gid, [self.app.AsyncResult(i) for i in header_ids], app=self.app)
         return result
 
     def apply(self, args: Any = None, kwargs: dict[str, Any] | None = None, **options: Any) -> Any:
@@ -533,3 +554,31 @@ def xmap(task: Any, it: Iterable[Any]) -> Signature:
 
 def xstarmap(task: Any, it: Iterable[Any]) -> Signature:
     return task.starmap(it)
+
+
+def _is_plain(sig: Signature) -> bool:
+    return not isinstance(sig, (_chain, group, _chord))
+
+
+def _expand_member(
+    member: Signature, group_id: str, index: int, chord: dict[str, Any] | None = None
+) -> tuple[Signature, str]:
+    """Turn a composite group/chord member into (signature to publish, id of the task
+    whose result is the member's result). A chain's last step carries the group (and
+    chord) bookkeeping, so the chord counts the chain once it has finished."""
+    if not isinstance(member, _chain):
+        raise TypeError(f"Only chains can be nested in a group or chord, not {type(member).__name__}")
+    steps = member._prepare_steps()
+    last = steps[-1]
+    if not _is_plain(last):
+        raise TypeError("A chain nested in a group or chord must end with a task, not a group or chord")
+    last.set(group_id=group_id, group_index=index)
+    if chord is not None:
+        last.set(chord=chord, ignore_result=False)
+    return steps[0], last.id  # type: ignore[return-value]
+
+
+def _messages_for(app: Potatoq, sig: Signature) -> list[Message]:
+    from .worker.executor import signature_to_messages
+
+    return signature_to_messages(app, sig, (), None)

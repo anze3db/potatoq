@@ -200,9 +200,8 @@ class Potatoq:
         base = base or self.Task
         if isinstance(base, str):
             base = load_object(base)
-        if options.pop("shared", True) is False:
-            pass
         for ignored in (
+            "shared",
             "lazy",
             "trail",
             "send_events",
@@ -224,7 +223,7 @@ class Potatoq:
             "__doc__": fun.__doc__,
             "__module__": fun.__module__,
             "__qualname__": fun.__qualname__,
-            "__wrapped__": fun,
+            "__wrapped__": staticmethod(fun),
             "__annotations__": getattr(fun, "__annotations__", {}),
         }
         attrs.update(options)

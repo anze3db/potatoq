@@ -185,7 +185,8 @@ class PotatoqBackend(BaseTaskBackend):
         app = self.app
         name = task.module_path
         existing = app.tasks.get(name)
-        if existing is not None and getattr(existing, "_django_func", None) is task.func:
+        # Read from the class: through the instance the function would be a bound method.
+        if existing is not None and getattr(type(existing), "_django_func", None) is task.func:
             return existing
         options = {opt: getattr(task, opt) for opt in _OPTIONS if getattr(task, opt, None) not in (None, ())}
         backend_cls = type(self)

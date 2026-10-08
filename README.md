@@ -1,6 +1,10 @@
-# 🥔 Potatoq
+# 🥔 potatoq
 
 **A Celery-compatible task queue with production-ready defaults.**
+
+> [!NOTE]
+> potatoq was generated with **Claude Opus 5.5** (high effort): the research, design,
+> code, tests and docs.
 
 Switching from Celery is meant to be a find-and-replace: the same decorators, the same
 `delay()`/`apply_async()`, the same `chain`/`group`/`chord`, the same settings names.
@@ -64,7 +68,8 @@ $ pip install "potatoq[postgres]"     # + PostgreSQL (psycopg 3)
 $ pip install "potatoq[rabbitmq]"     # + RabbitMQ (pika)
 ```
 
-Python 3.11+.
+Python 3.11+ (including free-threaded builds) on **Linux and macOS**. Windows isn't
+supported: the worker relies on `fork()` and POSIX signals. Use WSL on Windows.
 
 ## Brokers
 
@@ -254,6 +259,10 @@ $ uv run --group docs zensical serve      # http://localhost:8000
 $ uv sync
 $ uv run pytest                 # needs local Redis, Postgres and RabbitMQ; skips what isn't running
 ```
+
+## Roadmap
+
+Known gaps and planned features live in the [wishlist](docs/wishlist.md). Pick one up!
 
 ## Releases
 

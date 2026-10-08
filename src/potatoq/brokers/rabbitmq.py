@@ -23,6 +23,7 @@ Design (research in docs/backends.md):
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import logging
 import math
@@ -413,7 +414,12 @@ class RabbitMQBroker(Broker):
         out: list[dict[str, Any]] = []
 
         def visit(ch: Any, method: Any, props: Any, body: bytes) -> bool:
-            message = serialization.loads(body)
+            try:
+                message = serialization.loads(body)
+            except ValueError:  # not even JSON: rejected by a worker as undecodable
+                message = None
+            if not isinstance(message, dict):
+                message = {"body": body.decode("utf-8", "replace")}
             headers = props.headers or {}
             reason = headers.get("potatoq-reason")
             if reason is None and headers.get("x-death"):
@@ -447,6 +453,8 @@ class RabbitMQConsumer(Consumer):
 
     broker: RabbitMQBroker
     can_settle_foreign = False
+    #: Seconds to wait for the I/O thread to run a command.
+    call_timeout = 60.0
 
     def __init__(self, broker: RabbitMQBroker, queues: list[str], worker_id: str, pid: int | None = None):
         super().__init__(broker, queues, worker_id, pid)
@@ -526,7 +534,7 @@ class RabbitMQConsumer(Consumer):
                 done.set()
 
         self._conn.add_callback_threadsafe(run)
-        if not done.wait(timeout=60):
+        if not done.wait(timeout=self.call_timeout):
             raise AMQPConnectionError("timed out talking to RabbitMQ")
         if "error" in box:
             raise box["error"]
@@ -637,15 +645,16 @@ class RabbitMQConsumer(Consumer):
         self._closing = True
         if self._thread is not None:
             self._thread.join(timeout=2)
-        try:
-            if self._conn is not None and self._conn.is_open:
-                # Return anything delivered but never started.
-                while True:
-                    try:
-                        _, method, _, _ = self._inbox.get_nowait()
-                    except queue_mod.Empty:
-                        break
-                    self._ch.basic_nack(method.delivery_tag, requeue=True)
-                self._conn.close()
-        except Exception:
-            pass
+        if self._conn is None or not self._conn.is_open:
+            return
+        # Return anything delivered but never started (if the channel is gone,
+        # RabbitMQ has requeued it already).
+        with contextlib.suppress(AMQPError):
+            while True:
+                try:
+                    _, method, _, _ = self._inbox.get_nowait()
+                except queue_mod.Empty:
+                    break
+                self._ch.basic_nack(method.delivery_tag, requeue=True)
+        with contextlib.suppress(Exception):
+            self._conn.close()

@@ -7,6 +7,9 @@
         session.add(user)
         send_welcome.delay(user.id)   # sent after COMMIT, dropped on ROLLBACK
 
+Savepoints work like Django's: what a rolled-back ``begin_nested()`` deferred is
+dropped, and releasing a savepoint sends nothing until the outer COMMIT.
+
 Tasks are only deferred once the transaction has written something: SQLAlchemy 2.0
 begins a transaction on any query, and a read-only request that never commits must
 not drop its tasks. When the broker is the same database as the session (Postgres or SQLite), the task
@@ -47,16 +50,37 @@ def _after_begin(session: Session, transaction: Any, connection: Any) -> None:
 _WROTE = "potatoq_wrote"
 
 
+def _defer(session: Session, fn: Any) -> None:
+    """Run ``fn`` when ``session`` commits; remember the savepoint it belongs to."""
+    session.info.setdefault(_KEY, []).append((session.get_nested_transaction(), fn))
+
+
 def _after_commit(session: Session) -> None:
+    if session.in_nested_transaction():
+        return  # a savepoint was released; the real COMMIT is still to come
     session.info.pop(_WROTE, None)
     callbacks = session.info.pop(_KEY, None)
-    for fn in callbacks or ():
+    for _, fn in callbacks or ():
         fn()
 
 
-def _after_rollback(session: Session) -> None:
-    session.info.pop(_WROTE, None)
-    session.info.pop(_KEY, None)
+def _within(transaction: Any, savepoint: Any) -> bool:
+    while transaction is not None:
+        if transaction is savepoint:
+            return True
+        transaction = transaction.parent
+    return False
+
+
+def _after_soft_rollback(session: Session, previous: Any) -> None:
+    if previous.nested:
+        # A savepoint rolled back: drop only what was deferred inside it.
+        callbacks = session.info.get(_KEY)
+        if callbacks:
+            session.info[_KEY] = [(tx, fn) for tx, fn in callbacks if not _within(tx, previous)]
+    elif not session.in_transaction():
+        session.info.pop(_WROTE, None)
+        session.info.pop(_KEY, None)
 
 
 def _after_flush(session: Session, flush_context: Any) -> None:
@@ -125,14 +149,14 @@ class SQLAlchemyTransactionHook:
             dbapi = session.connection().connection.driver_connection
             app.publish_now(messages, connection=dbapi)
             return True
-        session.info.setdefault(_KEY, []).append(lambda: app.publish_now(messages))
+        _defer(session, lambda: app.publish_now(messages))
         return True
 
     def on_commit(self, fn: Any, using: Any) -> bool:
         session = _current_session(using)
         if session is None:
             return False
-        session.info.setdefault(_KEY, []).append(fn)
+        _defer(session, fn)
         return True
 
 
@@ -143,13 +167,8 @@ def install(app: Potatoq, target: Any = Session) -> None:
     if id(target) not in _installed:
         event.listen(target, "after_begin", _after_begin)
         event.listen(target, "after_commit", _after_commit)
-        event.listen(target, "after_rollback", _after_rollback)
         event.listen(target, "after_flush", _after_flush)
         event.listen(target, "do_orm_execute", _do_orm_execute)
-        event.listen(
-            target,
-            "after_soft_rollback",
-            lambda session, previous: _after_rollback(session) if not session.in_transaction() else None,
-        )
+        event.listen(target, "after_soft_rollback", _after_soft_rollback)
         _installed.add(id(target))
     app.add_transaction_hook(SQLAlchemyTransactionHook())

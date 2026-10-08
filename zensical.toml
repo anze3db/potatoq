@@ -41,6 +41,7 @@ nav = [
   ] },
   { "Migrating from Celery" = "migrating-from-celery.md" },
   { "Changelog" = "changelog.md" },
+  { "Wishlist" = "wishlist.md" },
   { "Reference" = [
     "reference/settings.md",
     "reference/cli.md",

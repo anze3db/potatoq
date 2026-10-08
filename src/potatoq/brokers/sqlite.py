@@ -495,6 +495,8 @@ class SQLiteConsumer(Consumer):
                 sleep = 0.002
                 next_due = self._next_due(conn)
                 if next_due is not None and next_due <= time.time():
+                    # Became due since the claim looked: claim again right away.
+                    self._data_version = None
                     continue
             remaining = deadline - time.monotonic()
             if remaining <= 0 or self._interrupted:

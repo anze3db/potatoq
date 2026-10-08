@@ -6,6 +6,7 @@ description = "A Celery-compatible task queue with production-ready defaults and
 readme = "README.md"
 authors = [{ name = "Anže Pečar", email = "anze@pecar.me" }]
 license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = []
 keywords = ["celery", "task queue", "jobs", "background tasks", "redis", "rabbitmq", "postgres", "sqlite", "django"]
@@ -15,6 +16,9 @@ classifiers = [
     "Framework :: Flask",
     "Framework :: FastAPI",
     "Intended Audience :: Developers",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Typing :: Typed",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -29,6 +33,12 @@ redis = ["redis>=5.0"]
 postgres = ["psycopg[binary]>=3.2"]
 rabbitmq = ["pika>=1.3"]
 all = ["redis>=5.0", "psycopg[binary]>=3.2", "pika>=1.3"]
+
+[project.urls]
+Homepage = "https://github.com/anze3db/potatoq"
+Documentation = "https://anze3db.github.io/potatoq/"
+Changelog = "https://github.com/anze3db/potatoq/blob/main/CHANGELOG.md"
+Issues = "https://github.com/anze3db/potatoq/issues"
 
 [project.scripts]
 potatoq = "potatoq.cli:main"
@@ -86,6 +96,7 @@ parallel = true
 sigterm = true
 
 [tool.coverage.report]
+fail_under = 100
 show_missing = true
 skip_covered = true
 exclude_also = [
