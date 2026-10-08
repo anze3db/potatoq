@@ -553,3 +553,58 @@ def test_schedule_lists_entries_with_next_run(app, capsys):
     assert run(app, "schedule") == 0
     out = capsys.readouterr().out
     assert out.startswith("ping: cli.ping ") and " next=20" in out and out.rstrip().endswith(" UTC")
+
+
+def test_solo_worker_heartbeats_while_a_task_runs(app, monkeypatch, caplog):
+    """A long task mustn't make a solo worker look dead: other workers would recover
+    its task and run it again."""
+    import threading
+
+    app.conf.worker_heartbeat_interval = 0.01
+    seen: dict = {}
+    extended = threading.Event()
+    real_extend = app.broker.extend
+
+    def extend(deliveries):
+        real_extend(deliveries)
+        extended.set()
+
+    monkeypatch.setattr(app.broker, "extend", extend)
+    real_heartbeat = app.broker.heartbeat
+    failures = iter([RuntimeError("broker blip")])
+
+    def heartbeat(node_id, info):
+        failure = next(failures, None)
+        if failure:
+            raise failure
+        real_heartbeat(node_id, info)
+
+    monkeypatch.setattr(app.broker, "heartbeat", heartbeat)
+
+    @app.task(name="cli.slow")
+    def slow():
+        assert extended.wait(5)  # the lease is extended while we run...
+        seen["running"] = [w.get("running") for w in app.broker.workers()]  # ...and we're reported
+
+    slow.delay()
+    handlers: dict = {}
+    monkeypatch.setattr(signal, "signal", lambda sig, handler: handlers.__setitem__(sig, handler))
+    real_consumer = app.broker.consumer
+
+    def consumer(queues, node_id):
+        inner = real_consumer(queues, node_id)
+        real_fetch = inner.fetch
+
+        def fetch(timeout):
+            delivery = real_fetch(timeout=0)
+            if delivery is None:
+                handlers[signal.SIGTERM]()
+            return delivery
+
+        inner.fetch = fetch
+        return inner
+
+    monkeypatch.setattr(app.broker, "consumer", consumer)
+    assert run(app, "worker", "-P", "solo", "--no-scheduler") == 0
+    assert len(seen["running"]) == 1 and len(seen["running"][0]) == 1
+    assert "Heartbeat failed" in caplog.text

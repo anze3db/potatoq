@@ -9,6 +9,7 @@ import logging
 import os
 import socket
 import sys
+import threading
 import time
 from typing import Any
 
@@ -282,22 +283,46 @@ def run_solo(app: Potatoq, args: argparse.Namespace) -> int:
         scheduler = Scheduler(app) or None
         if scheduler:
             scheduler.start()
-    last_beat = 0.0
-    while not stop["flag"]:
-        if scheduler is not None:
-            scheduler.tick()  # between tasks: a long task delays sends (60 s catch-up)
-        if time.monotonic() - last_beat > app.conf.worker_heartbeat_interval:
-            app.broker.heartbeat(
-                node_id, {"hostname": hostname, "pid": os.getpid(), "queues": queues, "concurrency": 1}
-            )
+    current: dict[str, Any] = {}
+    info = {"hostname": hostname, "pid": os.getpid(), "queues": queues, "concurrency": 1}
+    done = threading.Event()
+
+    def heartbeat() -> None:
+        # In a thread, so a long task doesn't make this worker look dead (others would
+        # recover and rerun its task). Brokers keep one connection per thread.
+        while True:
+            delivery = current.get("delivery")
+            try:
+                app.broker.heartbeat(node_id, {**info, "running": [delivery.message.id] if delivery else []})
+                if delivery is not None:
+                    app.broker.extend([delivery])
+            except Exception:
+                logger.exception("Heartbeat failed")
+            if done.wait(app.conf.worker_heartbeat_interval):
+                return
+
+    beat = threading.Thread(target=heartbeat, name="potatoq-heartbeat", daemon=True)
+    beat.start()
+    try:
+        while not stop["flag"]:
+            if scheduler is not None:
+                scheduler.tick()  # between tasks: a long task delays sends (60 s catch-up)
             app.broker.tick()
-            last_beat = time.monotonic()
-        delivery = consumer.fetch(timeout=1.0)
-        if delivery is None:
-            continue
-        outcome = executor.execute(app, delivery.message, delivery_count=delivery.delivery_count, hostname=hostname)
-        executor.settle(app, consumer, delivery, outcome)
-        executor.log_done(delivery.message, outcome)
+            delivery = consumer.fetch(timeout=1.0)
+            if delivery is None:
+                continue
+            current["delivery"] = delivery
+            try:
+                outcome = executor.execute(
+                    app, delivery.message, delivery_count=delivery.delivery_count, hostname=hostname
+                )
+                executor.settle(app, consumer, delivery, outcome)
+            finally:
+                current.pop("delivery", None)
+            executor.log_done(delivery.message, outcome)
+    finally:
+        done.set()
+        beat.join()
     app.broker.unregister(node_id)
     return 0
 

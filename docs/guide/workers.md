@@ -11,7 +11,7 @@ $ potatoq -A proj worker -Q default,emails -c 8 -l info
 | `-c`, `--concurrency` | CPUs available to the process | Worker processes; respects CPU affinity and cgroup quotas |
 | `-t`, `--threads` | `1` | Task threads per process. See [threads](#threads) before raising it |
 | `-l`, `--loglevel` | `INFO` | |
-| `-P`, `--pool` | `prefork` | `solo` runs tasks in-process, one at a time (works with `pdb`); `threads` = `-c 1 --threads N` as in Celery |
+| `-P`, `--pool` | `prefork` | `solo` runs tasks in-process, one at a time (works with `pdb`), without time limits, scheduling periodic tasks only between tasks; `threads` = `-c 1 --threads N` as in Celery |
 | `--max-tasks-per-child` | `1000` | Recycle processes to contain memory leaks |
 | `--max-memory-per-child` | off | `512MB`, `2GiB`, or KiB like Celery |
 | `--shutdown-timeout` | `25` | Seconds running tasks get on `SIGTERM` |
