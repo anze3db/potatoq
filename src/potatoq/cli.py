@@ -70,11 +70,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     w = sub.add_parser("worker", help="Start a worker")
     w.add_argument("-c", "--concurrency", type=int, help="Number of worker processes (default: available CPUs)")
+    w.add_argument(
+        "-t",
+        "--threads",
+        type=int,
+        help="Task threads per process (default 1). For I/O-bound tasks; see the docs on time limits",
+    )
     w.add_argument("-Q", "--queues", help="Comma separated queues to consume (default: default queue)")
     w.add_argument("-l", "--loglevel", default=None, help="DEBUG, INFO, WARNING, ERROR")
     w.add_argument("-f", "--logfile")
     w.add_argument("-n", "--hostname")
-    w.add_argument("-P", "--pool", default="prefork", help="prefork (default) or solo (one task at a time, in-process)")
+    w.add_argument(
+        "-P",
+        "--pool",
+        default="prefork",
+        help="prefork (default), threads (= -c 1 --threads N, Celery compatible) or solo",
+    )
     w.add_argument("--max-tasks-per-child", type=int, default=-1)
     w.add_argument("--max-memory-per-child", default=-1, help="e.g. 512MB, or KiB like Celery")
     w.add_argument("--shutdown-timeout", type=float)
@@ -167,7 +178,13 @@ def cmd_worker(app: Potatoq, args: argparse.Namespace) -> int:
         with open(args.pidfile, "w") as f:
             f.write(str(os.getpid()))
     pool = (args.pool or "prefork").lower()
-    if pool not in ("prefork", "processes", "solo"):
+    if pool == "threads":
+        # Celery's `-P threads -c N` = N threads in one process. Same here, except
+        # that time limits are still enforced.
+        args.threads = args.threads or args.concurrency or 10
+        args.concurrency = 1
+        pool = "prefork"
+    elif pool not in ("prefork", "processes", "solo"):
         print(f"potatoq: pool {pool!r} is not supported; using prefork", file=sys.stderr)
         pool = "prefork"
     if pool == "solo":
@@ -183,6 +200,7 @@ def cmd_worker(app: Potatoq, args: argparse.Namespace) -> int:
         max_memory_per_child=args.max_memory_per_child,
         scheduler=False if args.no_scheduler else None,
         shutdown_timeout=args.shutdown_timeout,
+        threads=args.threads,
     )
     return worker.start()
 

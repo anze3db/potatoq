@@ -52,7 +52,8 @@ DEFAULTS: dict[str, Any] = {
     "task_publish_retry": True,
     "task_annotations": None,
     # --- worker -----------------------------------------------------------------
-    "worker_concurrency": None,  # None = number of CPUs
+    "worker_concurrency": None,  # processes; None = number of CPUs
+    "worker_threads": 1,  # task threads per process (I/O-bound workloads); see docs/guide/workers.md
     "worker_prefetch_multiplier": 1,  # each idle process fetches exactly one task
     "worker_max_tasks_per_child": 1000,  # recycle processes to contain memory leaks
     "worker_max_memory_per_child": None,  # KiB (Celery compatible) or "512MB"

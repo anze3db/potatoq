@@ -1,6 +1,6 @@
 # Installation
 
-potatoq needs Python 3.11 or newer (3.11 – 3.15 are tested). The core has no
+potatoq needs Python 3.11 or newer. 3.11 – 3.15 are tested, including the free-threaded 3.14t and 3.15t builds. The core has no
 dependencies; each broker's client library is an optional extra.
 
 === "uv"
@@ -28,5 +28,10 @@ dependencies; each broker's client library is an optional extra.
 | `postgres` | `psycopg[binary]>=3.2` | `postgresql://…`, `postgres://…` |
 | `redis` | `redis>=5` | `redis://…`, `rediss://…`, `valkey://…`, `unix://…` |
 | `rabbitmq` | `pika>=1.3` | `amqp://…`, `amqps://…` |
+
+!!! note "Free-threaded Python (3.13t, 3.14t, 3.15t)"
+    potatoq supports free-threaded builds. `psycopg-binary` doesn't publish wheels for
+    them yet, so for Postgres install `psycopg` (pure Python) and make sure the system
+    `libpq` is available (`apt install libpq5`, `brew install libpq`, or Postgres.app).
 
 Next: [the quickstart](quickstart.md).

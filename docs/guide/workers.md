@@ -8,9 +8,10 @@ $ potatoq -A proj worker -Q default,emails -c 8 -l info
 |---|---|---|
 | `-A`, `--app` | Django's app if `DJANGO_SETTINGS_MODULE` is set | `proj`, `proj.tasks`, or `proj.tasks:app` |
 | `-Q`, `--queues` | `default` | Comma-separated; consumed fairly |
-| `-c`, `--concurrency` | CPUs available to the process | Respects CPU affinity and cgroup quotas |
+| `-c`, `--concurrency` | CPUs available to the process | Worker processes; respects CPU affinity and cgroup quotas |
+| `-t`, `--threads` | `1` | Task threads per process. See [threads](#threads) before raising it |
 | `-l`, `--loglevel` | `INFO` | |
-| `-P`, `--pool` | `prefork` | `solo` runs tasks in-process, one at a time (works with `pdb`) |
+| `-P`, `--pool` | `prefork` | `solo` runs tasks in-process, one at a time (works with `pdb`); `threads` = `-c 1 --threads N` as in Celery |
 | `--max-tasks-per-child` | `1000` | Recycle processes to contain memory leaks |
 | `--max-memory-per-child` | off | `512MB`, `2GiB`, or KiB like Celery |
 | `--shutdown-timeout` | `25` | Seconds running tasks get on `SIGTERM` |
@@ -39,10 +40,53 @@ flowchart LR
   replacement processes safely. It heartbeats the node, extends the leases of running
   tasks, recovers tasks of dead nodes, kills processes that blow their hard time limit,
   and runs the scheduler.
-- **Each child** owns its broker connection and claims exactly one task when idle. While
+- **Each child** (or each thread in it, with `--threads`) owns its broker connection and claims exactly one task when idle. While
   idle it blocks on the broker's wake-up mechanism, so it doesn't busy-poll. It reports
   each task it starts to the supervisor over a pipe, so the supervisor can requeue that
   task if the child dies.
+
+## Threads
+
+Processes are the safe default: one task per process, killable, isolated. Most real tasks
+spend their time waiting on HTTP calls, email or the database, though, and one process
+per waiting task costs 50–150 MB each. `--threads` runs several tasks per process:
+
+```console
+$ potatoq -A proj worker -c 4 --threads 8      # 4 processes x 8 threads = 32 tasks at once
+```
+
+Each thread fetches and runs one task at a time with its own broker connection, so
+nothing is prefetched or held hostage. Use threads when your tasks are I/O-bound **and
+thread-safe**: no shared mutable module state, and thread-safe client libraries.
+
+!!! warning "How time limits work with threads"
+    CPython can't kill a single thread, only a whole process. With `--threads` above 1:
+
+    - **Soft time limit**: `SoftTimeLimitExceeded` is *injected* into the task's thread
+      and raised at the next Python instruction it runs. A thread blocked **inside a C
+      call** (a socket read without a timeout, a long NumPy operation, `time.sleep(600)`)
+      only sees it when that call returns. With `--threads 1` the soft limit is a signal
+      and also interrupts blocking calls. Give your network calls timeouts either way.
+    - **Hard time limit**: still enforced, by killing the **whole process**. The task that
+      overran is marked failed with `TimeLimitExceeded`. Every *other* task running in that
+      process is interrupted too, and requeued without counting as a failed delivery: it
+      runs again from the start on another process, so it must be idempotent.
+    - **Shutdown**: on `SIGTERM` running tasks get `--shutdown-timeout` to finish, then
+      `WorkerTerminate` is injected the same way (and the process killed 5 s later if a
+      thread is stuck in C code). Interrupted tasks are requeued without penalty.
+
+    For comparison, Celery's `--pool=threads` silently ignores both time limits.
+
+`async def` tasks are cancelled cleanly at their soft limit in either mode.
+
+### Free-threaded Python
+
+On a free-threaded build (`python3.14t`, `python3.15t`) threads run Python code truly in
+parallel, so `--threads` helps CPU-bound tasks too, not only I/O-bound ones. potatoq is
+pure Python and doesn't re-enable the GIL. Check your own dependencies' C extensions,
+since an extension that doesn't declare free-threading support turns the GIL back on.
+The test suite runs on 3.14t and 3.15t and checks that four CPU-bound tasks in one
+process each get nearly a full core.
 
 ## Shutdown
 

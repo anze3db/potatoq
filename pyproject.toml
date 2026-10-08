@@ -38,7 +38,7 @@ dev = [
     "pytest-timeout>=2.3",
     "ruff>=0.6",
     "redis>=5.0",
-    "psycopg[binary]>=3.2",
+    "psycopg>=3.2",
     "pika>=1.3",
     "django>=5.2",
     "flask>=3.0",
@@ -50,6 +50,13 @@ docs = [
     "mkdocstrings-python>=2",
     "zensical>=0.0.68",
 ]
+
+# psycopg's compiled wheels don't exist for free-threaded Python (3.13t/3.14t/3.15t):
+# there, sync with `--no-group binary` and the pure-Python psycopg uses the system libpq.
+binary = ["psycopg-binary>=3.2"]
+
+[tool.uv]
+default-groups = ["dev", "binary"]
 
 [build-system]
 requires = ["uv_build>=0.8.0,<0.13.0"]

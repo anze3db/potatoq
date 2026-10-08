@@ -67,9 +67,11 @@ existing classic queue. Pick new queue names rather than reusing Celery's.
 
 ## 5. Not supported (yet)
 
-* **Pools other than prefork.** `-P solo` runs in-process. Threads, gevent and eventlet
-  fall back to prefork with a warning. `async def` tasks are supported natively, which
-  covers most reasons for the green-thread pools.
+* **gevent and eventlet pools.** `-P solo` runs in-process, and `-P threads -c N` runs N
+  threads in one process, as in Celery, but with time limits still enforced
+  ([details](guide/workers.md#threads)). `--threads` also combines with several processes.
+  `async def` tasks are supported natively, which covers most reasons for the
+  green-thread pools.
 * **`rate_limit`.** Accepted but not enforced yet; a global, broker-backed rate limiter is
   planned.
 * **`revoke(terminate=True)`** of a running task. Waiting tasks are revoked; use time

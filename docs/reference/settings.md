@@ -53,7 +53,8 @@ automatically. The [design notes](../design/defaults.md) explain each default.
 
 | Setting | Default | |
 |---|---|---|
-| `worker_concurrency` | `None` | `None` = CPUs available to the process |
+| `worker_concurrency` | `None` | Processes; `None` = CPUs available to the process |
+| `worker_threads` | `1` | Task threads per process ([time-limit caveats](../guide/workers.md#threads)) |
 | `worker_max_tasks_per_child` | `1000` | `None` disables recycling |
 | `worker_max_memory_per_child` | `None` | `"512MB"`, or KiB as an int |
 | `worker_shutdown_timeout` | `25` | Seconds running tasks get on SIGTERM |

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import threading
 import time
 import traceback as tb
 from dataclasses import dataclass, field
@@ -40,9 +41,20 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("potatoq.worker")
 
-#: True only while user task code runs. Signal handlers (soft time limit, forced
-#: shutdown) raise into the task only then, never into broker bookkeeping.
-IN_TASK_BODY = False
+#: Per thread: whether user task code is running right now. Time limits and forced
+#: shutdown only ever interrupt a task while this is set, never broker bookkeeping.
+#: ``guard`` (optional, set by threaded workers) is entered/exited around the body.
+_body = threading.local()
+
+
+def in_task_body() -> bool:
+    return getattr(_body, "active", False)
+
+
+def set_body_guard(guard: Any) -> None:
+    """Install an object with ``enter()``/``exit()`` for this thread's task bodies."""
+    _body.guard = guard
+
 
 COMPLETE = "complete"  # ack (task succeeded or failed terminally)
 RETRY = "retry"  # replace with ``retry_message``
@@ -293,13 +305,17 @@ def execute(
     try:
         signals.task_prerun.send(sender=task, task_id=message.id, task=task, args=message.args, kwargs=message.kwargs)
         task.before_start(message.id, message.args, message.kwargs)
-        global IN_TASK_BODY
+        guard = getattr(_body, "guard", None)
         try:
-            IN_TASK_BODY = True
+            _body.active = True
+            if guard is not None:
+                guard.enter()
             try:
                 retval = task(*message.args, **message.kwargs)
             finally:
-                IN_TASK_BODY = False
+                if guard is not None:
+                    guard.exit()
+                _body.active = False
         except Exception as exc:
             if (
                 task.autoretry_for

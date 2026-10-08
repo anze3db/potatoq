@@ -77,15 +77,23 @@ def parse_memory(value: Any) -> int | None:
 
 
 @dataclass
+class Running:
+    delivery: Delivery
+    started: float
+    hard_deadline: float | None
+
+
+@dataclass
 class ChildProc:
     pid: int
     index: int
     read_fd: int
     started_at: float = field(default_factory=time.monotonic)
     buffer: bytes = b""
-    delivery: Delivery | None = None
-    hard_deadline: float | None = None
-    task_started: float | None = None
+    #: Tasks running in this process (several with ``--threads``), by task id.
+    running: dict[str, Running] = field(default_factory=dict)
+    #: Ids of the tasks whose hard time limit made us kill this process.
+    timed_out: set[str] = field(default_factory=set)
     killed_for_timeout: bool = False
     term_sent: bool = False
     abort_sent: bool = False
@@ -105,11 +113,13 @@ class Supervisor:
         max_memory_per_child: Any = -1,
         scheduler: bool | None = None,
         shutdown_timeout: float | None = None,
+        threads: int | None = None,
         **kwargs: Any,
     ):
         self.app = app
         conf = app.conf
         self.concurrency = int(concurrency or conf.worker_concurrency or default_concurrency())
+        self.threads = max(1, int(threads or conf.worker_threads or 1))
         if isinstance(queues, str):
             queues = [q.strip() for q in queues.split(",") if q.strip()]
         self.queues = list(queues or [conf.task_default_queue])
@@ -169,7 +179,8 @@ class Supervisor:
             "pid": os.getpid(),
             "queues": self.queues,
             "concurrency": self.concurrency,
-            "running": [c.delivery.message.id for c in self.children.values() if c.delivery],
+            "threads": self.threads,
+            "running": [task_id for c in self.children.values() for task_id in c.running],
         }
 
     def _banner(self) -> None:
@@ -178,12 +189,20 @@ class Supervisor:
         broker_url = _redact(self.app.broker.url)
         backend = self.app.backend
         logger.info(
-            "potatoq %s worker %s ready: broker=%s results=%s queues=%s concurrency=%d (prefork) "
+            "potatoq %s worker %s ready: broker=%s results=%s queues=%s concurrency=%d %s "
             "time_limit=%ss max_tasks_per_child=%s scheduler=%s",
             __version__, self.hostname, broker_url, _redact(backend.url) if backend else "disabled",
-            ",".join(self.queues), self.concurrency, self.app.conf.task_time_limit, self.max_tasks_per_child,
-            "on" if self.scheduler else "off",
+            ",".join(self.queues), self.concurrency * self.threads,
+            f"({self.concurrency} processes x {self.threads} threads)" if self.threads > 1 else "(prefork)",
+            self.app.conf.task_time_limit, self.max_tasks_per_child, "on" if self.scheduler else "off",
         )  # fmt: skip
+        if self.threads > 1:
+            logger.info(
+                "Threads: soft time limits interrupt a task at its next Python instruction (not inside a "
+                "blocking C call); a hard time limit kills the whole process and requeues the other %d task(s) "
+                "running in it.",
+                self.threads - 1,
+            )
         if not self.consumer.can_settle_foreign and backend is None:
             logger.warning(
                 "No result backend: tasks killed for exceeding their hard time limit will be redelivered by "
@@ -240,6 +259,7 @@ class Supervisor:
             child_main(
                 self.app, node_id=self.node_id, queues=self.queues, write_fd=write_fd, index=index,
                 hostname=self.hostname, max_tasks=self.max_tasks_per_child, max_memory_kib=self.max_memory_kib,
+                threads=self.threads,
             )  # fmt: skip
         os.close(write_fd)
         os.set_blocking(read_fd, False)
@@ -272,19 +292,20 @@ class Supervisor:
                 continue
             event = serialization.loads(line)
             if event["e"] == "start":
-                child.delivery = Delivery(
+                delivery = Delivery(
                     Message.from_dict(event["message"]),
                     delivery_count=event["count"],
                     handle=_to_handle(event["handle"]),
                 )
-                child.task_started = event["started"]
                 hard = event.get("hard")
-                # A little grace so the soft limit's exception can be handled first.
-                child.hard_deadline = time.monotonic() + (hard - event["started"]) + 1.0 if hard else None
+                child.running[delivery.message.id] = Running(
+                    delivery=delivery,
+                    started=event["started"],
+                    # A little grace so the soft limit's exception can be handled first.
+                    hard_deadline=time.monotonic() + (hard - event["started"]) + 1.0 if hard else None,
+                )
             elif event["e"] == "done":
-                child.delivery = None
-                child.hard_deadline = None
-                child.task_started = None
+                child.running.pop(event["id"], None)
 
     def _reap(self) -> None:
         while True:
@@ -304,9 +325,7 @@ class Supervisor:
 
     def _on_child_exit(self, child: ChildProc, status: int) -> None:
         code = os.waitstatus_to_exitcode(status)
-        lost: list[Delivery] = []
-        if child.delivery is not None:
-            lost.append(child.delivery)
+        lost: list[Delivery] = [r.delivery for r in child.running.values()]
         if self.consumer.can_settle_foreign:
             known = {d.message.id for d in lost}
             try:
@@ -337,8 +356,9 @@ class Supervisor:
         app = self.app
         message = delivery.message
         consumer = self.consumer
-        if child.killed_for_timeout:
-            hard = (time.time() - child.task_started) if child.task_started else None
+        if message.id in child.timed_out:
+            running = child.running.get(message.id)
+            hard = (time.time() - running.started) if running else None
             exc: BaseException = TimeLimitExceeded(
                 f"Task {message.task}[{message.id}] exceeded its time limit ({hard:.0f}s) and was killed"
                 if hard
@@ -346,8 +366,11 @@ class Supervisor:
             )
             logger.error("%s", exc)
             outcome = executor.failure_outcome(app, message, exc, self.hostname)
-        elif self.shutting_down and child.abort_sent:
-            logger.warning("Requeueing %s[%s] interrupted by shutdown", message.task, message.id)
+        elif (self.shutting_down and child.abort_sent) or child.killed_for_timeout:
+            # Interrupted by shutdown, or an innocent bystander of another task's hard
+            # time limit in the same (threaded) process: not this task's fault.
+            reason = "shutdown" if not child.killed_for_timeout else "another task's time limit"
+            logger.warning("Requeueing %s[%s] interrupted by %s", message.task, message.id, reason)
             if consumer.can_settle_foreign:
                 consumer.requeue(delivery, count=False)
             return
@@ -416,7 +439,7 @@ class Supervisor:
                 if now >= timers["heartbeat"]:
                     timers["heartbeat"] = now + heartbeat_every
                     broker.heartbeat(self.node_id, self._info())
-                    running = [c.delivery for c in self.children.values() if c.delivery is not None]
+                    running = [r.delivery for c in self.children.values() for r in c.running.values()]
                     if running:
                         broker.extend(running)
                 if self.shutting_down:
@@ -446,9 +469,19 @@ class Supervisor:
 
     def _enforce_time_limits(self, now: float) -> None:
         for child in list(self.children.values()):
-            if child.hard_deadline is not None and now >= child.hard_deadline and not child.killed_for_timeout:
+            if child.killed_for_timeout:
+                continue
+            expired = [
+                tid for tid, r in child.running.items() if r.hard_deadline is not None and now >= r.hard_deadline
+            ]
+            if expired:
                 child.killed_for_timeout = True
-                logger.error("Hard time limit exceeded; killing child %d", child.pid)
+                child.timed_out.update(expired)
+                others = len(child.running) - len(expired)
+                logger.error(
+                    "Hard time limit exceeded by %s; killing child %d%s",
+                    ", ".join(expired), child.pid, f" (requeueing {others} other task(s))" if others else "",
+                )  # fmt: skip
                 self._kill(child, signal.SIGKILL)
 
     def _shutdown_step(self, now: float) -> None:

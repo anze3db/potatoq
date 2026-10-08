@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.11", "3.12", "3.13", "3.14", "3.15"]
+        python: ["3.11", "3.12", "3.13", "3.14", "3.15", "3.14t", "3.15t"]
     services:
       redis:
         image: redis:8
@@ -45,4 +45,6 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: ${{ matrix.python }}
-      - run: uv run --python ${{ matrix.python }} pytest -q
+      # psycopg-binary has no free-threaded wheels: use pure psycopg + the runner's libpq.
+      - run: uv sync --python ${{ matrix.python }} ${{ endsWith(matrix.python, 't') && '--no-group binary' || '' }}
+      - run: uv run --no-sync --python ${{ matrix.python }} pytest -q
