@@ -31,6 +31,8 @@ logger = logging.getLogger("potatoq")
 _state = threading.local()
 _default_app: Potatoq | None = None
 _current_app: Potatoq | None = None
+#: The app ``_get_default_app()`` created on its own (no app created explicitly yet).
+_implicit_app: Potatoq | None = None
 _shared_tasks: list[Callable[[Potatoq], Task]] = []
 _apps: list[Potatoq] = []
 _inherited: list[Any] = []
@@ -48,9 +50,9 @@ def _get_default_app() -> Potatoq:
 
     With Django this needs no ``celery.py``: settings are read from Django settings.
     """
-    global _default_app
+    global _default_app, _implicit_app
     if _default_app is None:
-        _default_app = Potatoq("default", set_as_current=False)
+        _default_app = _implicit_app = Potatoq("default", set_as_current=False)
         if os.environ.get("DJANGO_SETTINGS_MODULE"):
             from .contrib.django import configure_app
 

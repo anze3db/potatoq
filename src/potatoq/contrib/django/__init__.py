@@ -137,17 +137,21 @@ def _bind_task_backends(app: Potatoq, bind_backends: bool = True) -> None:
         from django.tasks import task_backends
     except ImportError:  # pragma: no cover - Django < 6 (dev and CI use Django 6)
         return
+    from ... import app as app_module
     from ...config import load_object
     from .tasks import PotatoqBackend, _default_apps
 
+    backends = []
     for alias in getattr(_settings(), "TASKS", None) or {}:
         try:
             backend = task_backends[alias]
         except Exception:
             logger.exception("Could not load django.tasks backend %r", alias)
             continue
-        if not isinstance(backend, PotatoqBackend):
-            continue
+        if isinstance(backend, PotatoqBackend):
+            backends.append((alias, backend))
+    named = False  # some backend's APP option is this app
+    for alias, backend in backends:
         target = backend.options.get("APP")
         if target:
             try:
@@ -157,8 +161,14 @@ def _bind_task_backends(app: Potatoq, bind_backends: bool = True) -> None:
                 logger.debug("Could not load APP %r of django.tasks backend %r", target, alias, exc_info=True)
                 continue
             if target is app:
+                named = True
                 backend.bind(app)
-        elif bind_backends and alias not in _default_apps:
+    if not bind_backends or named:
+        return  # an app named by an APP option never takes over the other backends
+    for alias, backend in backends:
+        # First app wins, except over the implicit one: a celery.py app configured after
+        # something touched @shared_task's fallback app still takes over.
+        if not backend.options.get("APP") and _default_apps.get(alias) in (None, app_module._implicit_app):
             backend.bind(app)
 
 

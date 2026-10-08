@@ -164,6 +164,7 @@ def test_on_commit_follows_atomic_blocks(django_env):
     assert calls == ["now", "later"]
 
 
+@pytest.mark.filterwarnings("ignore:The EMAIL_")
 def test_app_config_ready_configures_an_explicit_app(django_env):
     from django.apps import apps
     from django.tasks import task_backends
@@ -175,11 +176,18 @@ def test_app_config_ready_configures_an_explicit_app(django_env):
         apps.get_app_config("potatoq").ready()
         assert other.conf.task_default_queue == "shop"
         assert other.conf.broker_url == django_env.conf.broker_url
-        # django.tasks stay on the app configured first, in every thread.
-        assert task_backends["default"].app is django_env
-        assert other._task_resolvers == []
+        # The explicit app takes django.tasks over from the implicit one, in every thread.
+        assert task_backends["default"].app is other
+        assert len(other._task_resolvers) == 1
+        third = Potatoq("third", broker="memory://", set_as_current=False)
+        third.config_from_object("django.conf:settings")  # but not from another explicit app
+        assert task_backends["default"].app is other
+        third.close()
     finally:
+        from potatoq.contrib.django import tasks as dj_tasks
+
         task_backends["default"]._app = None
+        dj_tasks._default_apps["default"] = django_env
         django_env.set_current()
         other.close()
 

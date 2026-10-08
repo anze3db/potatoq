@@ -175,6 +175,9 @@ def django_env(django_session):
     """The Django project's potatoq app, made current again for this test."""
     from django.tasks import task_backends
 
+    from potatoq.contrib.django import tasks as dj_tasks
+
     django_session.set_current()
     task_backends["default"]._app = None
+    dj_tasks._default_apps.clear()  # apps other tests configured from Django took it over
     return django_session

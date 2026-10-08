@@ -164,11 +164,13 @@ class PotatoqBackend(BaseTaskBackend):
 
     @property
     def app(self) -> Potatoq:
+        target = self.options.get("APP")
+        if not target and (bound := _default_apps.get(self.alias)) is not None:
+            return bound  # the same in every thread's instance, even after a takeover
         if self._app is None:
             from ...app import current_app
             from . import _INSTALLED, install
 
-            target = self.options.get("APP")
             if target:
                 app = load_object(target) if isinstance(target, str) else target
             else:
