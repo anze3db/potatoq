@@ -112,6 +112,7 @@ def install(app: Potatoq) -> None:
     from ... import signals
 
     app.add_transaction_hook(DjangoTransactionHook())
+    _bind_task_backends(app)
     if not getattr(install, "_signals_connected", False):
         signals.task_prerun.connect(_close_old_connections, weak=False, dispatch_uid="potatoq.django.prerun")
         signals.task_postrun.connect(_close_old_connections, weak=False, dispatch_uid="potatoq.django.postrun")
@@ -119,6 +120,25 @@ def install(app: Potatoq) -> None:
         signals.worker_process_init.connect(_drop_inherited, weak=False, dispatch_uid="potatoq.django.process_init")
         install._signals_connected = True  # type: ignore[attr-defined]
     app.autodiscover_tasks()
+
+
+def _bind_task_backends(app: Potatoq) -> None:
+    """Initialise ``django.tasks`` backends that run on potatoq (TASKS setting), so a
+    worker can resolve Django tasks by name even if nothing else touched them."""
+    try:
+        from django.tasks import task_backends
+    except ImportError:  # Django < 6
+        return
+    from .tasks import PotatoqBackend
+
+    for alias in getattr(_settings(), "TASKS", None) or {}:
+        try:
+            backend = task_backends[alias]
+        except Exception:
+            logger.exception("Could not load django.tasks backend %r", alias)
+            continue
+        if isinstance(backend, PotatoqBackend) and not backend.options.get("APP"):
+            backend.bind(app)
 
 
 def _close_old_connections(**kwargs: Any) -> None:

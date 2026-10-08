@@ -14,3 +14,10 @@ DATABASES = {
 }
 CELERY_TASK_ACKS_LATE = True  # old Celery settings are read (and this one is the default anyway)
 POTATOQ = {"task_default_queue": "shop"}
+
+TASKS = {
+    "default": {
+        "BACKEND": "potatoq.contrib.django.tasks.PotatoqBackend",
+        "QUEUES": ["shop", "default", "emails"],
+    }
+}

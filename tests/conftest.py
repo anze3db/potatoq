@@ -140,3 +140,41 @@ def memory_app() -> Iterator[Potatoq]:
     app.conf.result_backend = "broker"
     yield app
     app.close()
+
+
+TESTS = __import__("pathlib").Path(__file__).parent
+
+
+@pytest.fixture(scope="session")
+def django_session(tmp_path_factory):
+    """Django configured once per test run (tests/djangoproj), like a fresh project."""
+    import sys
+
+    sys.path.insert(0, str(TESTS))
+    os.environ["DJANGO_SETTINGS_MODULE"] = "djangoproj.settings"
+    os.environ["TEST_DJANGO_DB"] = str(tmp_path_factory.mktemp("dj") / "db.sqlite3")
+    import django
+
+    from potatoq import app as app_module
+
+    # No app created explicitly: potatoq.contrib.django configures the default one.
+    app_module._current_app = None
+    app_module._default_app = None
+    django.setup()
+    from django.db import connection
+
+    with connection.cursor() as cur:
+        cur.execute("CREATE TABLE IF NOT EXISTS shop_order (id integer primary key, total integer)")
+    app = app_module.current_app()
+    yield app
+    os.environ.pop("DJANGO_SETTINGS_MODULE", None)
+
+
+@pytest.fixture
+def django_env(django_session):
+    """The Django project's potatoq app, made current again for this test."""
+    from django.tasks import task_backends
+
+    django_session.set_current()
+    task_backends["default"]._app = None
+    return django_session

@@ -42,6 +42,10 @@ $ DJANGO_SETTINGS_MODULE=mysite.settings potatoq worker
 $ python manage.py potatoq worker
 ```
 
+!!! tip "Django 6 `django.tasks`"
+    Prefer Django's built-in task API? potatoq is a backend for it, and both styles can
+    share workers. See [Django Tasks](django-tasks.md).
+
 ## Settings
 
 Use a `POTATOQ` dict, `POTATOQ_*` settings, or keep your existing `CELERY_*` ones:

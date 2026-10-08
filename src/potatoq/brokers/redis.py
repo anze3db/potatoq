@@ -432,6 +432,13 @@ class RedisBroker(Broker):
                 return record
             client.blpop([notify], timeout=min(2.0, remaining) if remaining is not None else 2.0)
 
+    def peek(self, task_id: str) -> tuple[Message, str] | None:
+        state, payload = self.client.hmget(f"{self.prefix}:job:{task_id}", "st", "p")
+        states_map = {b"delayed": "scheduled", b"ready": "ready", b"active": "running"}
+        if payload is None or state not in states_map:
+            return None
+        return Message.decode(payload), states_map[state]
+
     def forget(self, task_id: str) -> None:
         self.client.delete(f"{self.prefix}:result:{task_id}")
 

@@ -51,6 +51,8 @@ class ResultRecord:
     kwargs: Any = None
     retries: int = 0
     worker: str | None = None
+    date_started: float | None = None
+    enqueued_at: float | None = None
 
     @property
     def ready(self) -> bool:
@@ -69,6 +71,8 @@ class ResultRecord:
             "kwargs": self.kwargs,
             "retries": self.retries,
             "worker": self.worker,
+            "date_started": self.date_started,
+            "enqueued_at": self.enqueued_at,
         }
 
     @classmethod
@@ -85,6 +89,8 @@ class ResultRecord:
             kwargs=data.get("kwargs"),
             retries=data.get("retries", 0),
             worker=data.get("worker"),
+            date_started=data.get("date_started"),
+            enqueued_at=data.get("enqueued_at"),
         )
 
 
@@ -205,6 +211,11 @@ class Broker:
 
     def forget(self, task_id: str) -> None:
         raise NotImplementedError
+
+    def peek(self, task_id: str) -> tuple[Message, str] | None:
+        """A task that hasn't finished yet: its message and ``"scheduled"``,
+        ``"ready"`` or ``"running"``. None if unknown or not supported (RabbitMQ)."""
+        return None
 
     # --- coordination -------------------------------------------------------------
 

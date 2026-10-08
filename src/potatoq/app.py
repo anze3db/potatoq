@@ -100,6 +100,7 @@ class Potatoq:
         self._broker: Broker | None = None
         self._backend: Broker | bool | None = False  # False = not resolved yet
         self._transaction_hooks: list[Any] = []
+        self._task_resolvers: list[Callable[[str], Task | None]] = []
         self._autodiscover: list[tuple[Any, str]] = []
         self._finalized = False
         self._pid = os.getpid()
@@ -230,6 +231,18 @@ class Potatoq:
         task = task_cls()
         self.tasks.register(task)
         return task
+
+    def resolve_task(self, name: str) -> Task | None:
+        """The registered task ``name``, or one an integration can load on demand
+        (e.g. a ``django.tasks`` task whose module the worker hasn't imported yet)."""
+        task = self.tasks.get(name)
+        if task is not None:
+            return task
+        for resolver in self._task_resolvers:
+            task = resolver(name)
+            if task is not None:
+                return task
+        return None
 
     def gen_task_name(self, name: str, module: str) -> str:
         if module == "__main__" and self.main:

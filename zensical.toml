@@ -28,6 +28,7 @@ nav = [
   ] },
   { "Integrations" = [
     "integrations/django.md",
+    "integrations/django-tasks.md",
     "integrations/flask.md",
     "integrations/fastapi.md",
     "integrations/sqlalchemy.md",

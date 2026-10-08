@@ -48,3 +48,10 @@ jobs:
       # psycopg-binary has no free-threaded wheels: use pure psycopg + the runner's libpq.
       - run: uv sync --python ${{ matrix.python }} ${{ endsWith(matrix.python, 't') && '--no-group binary' || '' }}
       - run: uv run --no-sync --python ${{ matrix.python }} pytest -q
+
+  django-6-0:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv run --with 'django>=6.0,<6.1' pytest -q tests/test_django.py tests/test_django_tasks.py

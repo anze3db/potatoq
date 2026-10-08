@@ -2,35 +2,7 @@
 
 from __future__ import annotations
 
-import os
-import sys
-from pathlib import Path
-
 import pytest
-
-TESTS = Path(__file__).parent
-
-
-@pytest.fixture(scope="module")
-def django_env(tmp_path_factory):
-    sys.path.insert(0, str(TESTS))
-    os.environ["DJANGO_SETTINGS_MODULE"] = "djangoproj.settings"
-    os.environ["TEST_DJANGO_DB"] = str(tmp_path_factory.mktemp("dj") / "db.sqlite3")
-    import django
-
-    from potatoq import app as app_module
-
-    # Behave like a fresh Django project: no app created explicitly.
-    app_module._current_app = None
-    app_module._default_app = None
-    django.setup()
-    from django.db import connection
-
-    with connection.cursor() as cur:
-        cur.execute("CREATE TABLE IF NOT EXISTS shop_order (id integer primary key, total integer)")
-    app = app_module.current_app()
-    yield app
-    os.environ.pop("DJANGO_SETTINGS_MODULE", None)
 
 
 def jobs(app):

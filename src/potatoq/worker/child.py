@@ -271,7 +271,7 @@ class Child:
         """Run one task. Returns False if this slot must stop afterwards."""
         app = self.app
         message = delivery.message
-        task = app.tasks.get(message.task)
+        task = app.resolve_task(message.task)
         hard, soft = task.resolved_time_limits(message.options) if task else (None, None)
         started = time.time()
         self._report(

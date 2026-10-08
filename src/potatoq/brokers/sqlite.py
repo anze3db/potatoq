@@ -247,6 +247,12 @@ class SQLiteBroker(Broker):
             return ResultRecord(task_id=task_id, state=states.STARTED)
         return None
 
+    def peek(self, task_id: str) -> tuple[Message, str] | None:
+        row = self.conn.execute("SELECT state, payload FROM potatoq_jobs WHERE id = ?", (task_id,)).fetchone()
+        if row is None:
+            return None
+        return Message.decode(row[1]), {SCHEDULED: "scheduled", READY: "ready", RUNNING: "running"}[row[0]]
+
     def forget(self, task_id: str) -> None:
         with self._write() as conn:
             conn.execute("DELETE FROM potatoq_results WHERE id = ?", (task_id,))

@@ -137,6 +137,8 @@ def _record(
         kwargs=message.kwargs,
         retries=message.retries,
         worker=request.hostname if request else None,
+        date_started=getattr(request, "started_at", None) if request else None,
+        enqueued_at=message.enqueued_at,
     )
 
 
@@ -246,7 +248,7 @@ def execute(
 ) -> Outcome:
     """Run ``message`` and return what should happen next. Never raises."""
     start = time.monotonic()
-    task: Task | None = app.tasks.get(message.task)
+    task: Task | None = app.resolve_task(message.task)
     limits = task.resolved_time_limits(message.options) if task is not None else (None, None)
     request = build_request(message, delivery_count, hostname, is_eager, limits)
 
@@ -293,10 +295,14 @@ def execute(
         exc = NotRegistered(message.task)
         logger.error("Received unregistered task %r (id %s); dead-lettering it", message.task, message.id)
         signals.task_unknown.send(sender=None, name=message.task, id=message.id, message=message, exc=exc)
-        return Outcome(DEAD_LETTER, states.FAILURE, exc=exc, reason=f"unregistered task {message.task}")
+        record = None
+        if backend is not None and not message.ignore_result:
+            record = _record(message, states.FAILURE, serialization.exception_to_dict(exc), request, str(exc))
+        return Outcome(DEAD_LETTER, states.FAILURE, record=record, exc=exc, reason=f"unregistered task {message.task}")
 
     ignore_result = message.ignore_result
     store = backend is not None and not ignore_result
+    request.started_at = time.time()
     task.push_request(**request.__dict__)
     set_current_task(task)
     if on_start is not None:

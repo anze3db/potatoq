@@ -343,6 +343,16 @@ class PostgresBroker(Broker):
 
         return self._run(_get)
 
+    def peek(self, task_id: str) -> tuple[Message, str] | None:
+        row = self._run(
+            lambda conn: conn.execute(
+                self._sql("SELECT state, payload FROM {jobs} WHERE id = %s"), (task_id,)
+            ).fetchone()
+        )
+        if row is None:
+            return None
+        return Message.decode(row[1]), {SCHEDULED: "scheduled", READY: "ready", RUNNING: "running"}[row[0]]
+
     def forget(self, task_id: str) -> None:
         self._run(lambda conn: conn.execute(self._sql("DELETE FROM {results} WHERE id = %s"), (task_id,)))
 

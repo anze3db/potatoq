@@ -137,6 +137,10 @@ the same semantics as `on_commit`, without the window where a crash between COMM
 publishing loses the task. `delay_on_commit()` (Celery 5.4) is supported too, and
 `@shared_task(enqueue_on_commit=False)` opts a task out.
 
+Using Django 6's built-in `django.tasks`? potatoq is a backend for it, with
+priorities, `run_after`, async tasks, `get_result()` and signals. Set
+`TASKS = {"default": {"BACKEND": "potatoq.contrib.django.tasks.PotatoqBackend"}}`.
+
 Run workers with `potatoq worker` (it reads `DJANGO_SETTINGS_MODULE`) or `python manage.py potatoq worker`.
 
 ## Flask, FastAPI, SQLAlchemy

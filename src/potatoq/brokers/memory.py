@@ -98,6 +98,14 @@ class MemoryBroker(Broker):
                 return ResultRecord(task_id=task_id, state=states.STARTED)
         return None
 
+    def peek(self, task_id: str) -> tuple[Message, str] | None:
+        with self.lock:
+            job = self.jobs.get(task_id)
+            if job is None:
+                return None
+            state = {"delayed": "scheduled", "ready": "ready", "active": "running"}[job["state"]]
+            return Message.decode(job["payload"]), state
+
     def forget(self, task_id: str) -> None:
         with self.lock:
             self.results.pop(task_id, None)
