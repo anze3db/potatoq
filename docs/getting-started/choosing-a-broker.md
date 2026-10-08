@@ -1,17 +1,26 @@
+---
+hide:
+  - toc
+---
+
 # Choosing a broker
 
 Every broker supports the full feature set (delays, priorities, retries, dead letters,
 chords and periodic tasks), each implemented with its own native primitives. Choose
 based on what you already run.
 
-| | Postgres | Redis / Valkey | RabbitMQ | SQLite |
-|---|---|---|---|---|
-| **Best for** | most apps | very high throughput | existing RabbitMQ shops | development, single host |
-| Extra infrastructure | none if you already use Postgres | Redis | RabbitMQ 4.x | none |
-| Transactional enqueue | :lucide-check: | — (on commit) | — (on commit) | :lucide-check: |
-| Results | built in, free | opt-in | needs a `result_backend` | built in, free |
-| Wake-up | `LISTEN/NOTIFY` | `BZPOPMIN` | push (consume) | `data_version` |
-| Throughput (local, 4 procs) | ~7.5k tasks/s | ~12k tasks/s | ~7k tasks/s | ~6k tasks/s |
+| Broker | Best for | Extra infrastructure | Transactional enqueue | Results | Throughput¹ |
+|---|---|---|---|---|---:|
+| [**Postgres**](../brokers/postgres.md) | most apps | none (your database) | :lucide-check: | built in | ~7.5k/s |
+| [**Redis / Valkey**](../brokers/redis.md) | high throughput | Redis | on commit | opt-in | ~12k/s |
+| [**RabbitMQ**](../brokers/rabbitmq.md) | RabbitMQ shops | RabbitMQ 4.x | on commit | separate backend | ~7k/s |
+| [**SQLite**](../brokers/sqlite.md) | development, single host | none (a file) | :lucide-check: | built in | ~6k/s |
+
+"On commit": a transactional enqueue needs the queue in your database, so these brokers
+send tasks right after `COMMIT` instead.
+
+¹ No-op tasks per second, 4 worker processes,
+broker on localhost ([benchmark](https://github.com/anze3db/potatoq/blob/main/benchmarks/throughput.py)).
 
 ## Recommendations
 
