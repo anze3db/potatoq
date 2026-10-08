@@ -120,3 +120,30 @@ def test_management_command(django_env, capsys):
 
     call_command("potatoq", "queues")
     assert capsys.readouterr().out
+
+
+def test_django_objects_are_rejected_with_a_helpful_message(django_env):
+    """Models and querysets never go over the wire (no pickle): passing one fails at
+    .delay() time, in the web process, with advice on what to pass instead."""
+    from django.contrib.contenttypes.models import ContentType
+    from django.core.management import call_command
+    from django.utils.translation import gettext_lazy
+
+    from potatoq import Potatoq
+
+    call_command("migrate", "contenttypes", verbosity=0)
+    app = Potatoq("ser", broker="memory://", set_as_current=False)
+
+    @app.task
+    def handle(obj):
+        return obj
+
+    instance = ContentType.objects.first()
+    with pytest.raises(TypeError, match=r"Django model instance.*primary key \(obj\.pk\)"):
+        handle.delay(instance)
+    with pytest.raises(TypeError, match=r"Django queryset.*values_list"):
+        handle.delay(ContentType.objects.all())
+    assert app.broker.queue_sizes() == {}  # nothing was enqueued
+    handle.delay(gettext_lazy("Hello"))  # lazy strings are fine: sent as plain text
+    handle.delay(instance.pk)  # what you should pass instead
+    assert app.broker.queue_sizes() == {"default": 2}

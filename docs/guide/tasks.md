@@ -57,17 +57,41 @@ Every option can be set per task in the decorator, and most also per call in
 
 ## Arguments must be JSON
 
-Messages are JSON, never pickle. These types round-trip unchanged: `datetime`, `date`,
-`time`, `timedelta`, `UUID`, `Decimal`, `bytes` and `set`, plus enums and paths as their
-values. Anything else fails at `.delay()` time, not later on the worker:
+Task arguments and results are serialized as **JSON, never pickle**. Pickle would make
+broker write access equal to code execution. It also invites a classic bug: passing a
+Django model to a task ships a snapshot that is stale, or broken, by the time the
+worker runs it.
+
+These types round-trip unchanged: `datetime`, `date`, `time`, `timedelta`, `UUID`,
+`Decimal`, `bytes` and `set`. Enums and paths are sent as their values, and Django's
+lazy translation strings as plain text. Anything else fails when you call `.delay()`,
+in your web process, not later on the worker:
 
 ```pycon
->>> resize.delay(Image.objects.get(pk=1))
-TypeError: Object of type Image is not JSON serializable. Pass primitive values (ids, strings, numbers) to tasks instead of objects.
+>>> send_receipt.delay(order)
+TypeError: Order is a Django model instance and can't be a task argument. Pass its
+primary key (obj.pk) and load it inside the task with Order.objects.get(pk=...), so the
+task works with current data.
+
+>>> send_receipts.delay(Order.objects.filter(paid=True))
+TypeError: QuerySet (a Django queryset) can't be a task argument. Pass a list of primary
+keys (list(qs.values_list("pk", flat=True))) and query inside the task.
 ```
 
-Pass ids and load the object inside the task. Arguments are also checked against the
-function signature when you enqueue, so `resize.delay(1, 2, 3)` raises immediately.
+Pass ids and load the object inside the task:
+
+```python
+@shared_task
+def send_receipt(order_id):
+    order = Order.objects.get(pk=order_id)   # current data, at the time the task runs
+    ...
+
+send_receipt.delay(order.pk)
+```
+
+Arguments are also checked against the function signature when you enqueue, so
+`resize.delay(1, 2, 3)` raises immediately. Eager mode (`task_always_eager`) still
+round-trips arguments through the serializer, so tests catch these mistakes too.
 
 ## `async def` tasks
 

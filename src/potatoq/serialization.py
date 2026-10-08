@@ -51,8 +51,23 @@ def _default(obj: Any) -> Any:
     # Django's lazy translation strings.
     if type(obj).__name__ == "__proxy__":
         return str(obj)
+    name = type(obj).__name__
+    meta = getattr(obj, "_meta", None)
+    if meta is not None and hasattr(obj, "pk") and hasattr(meta, "model_name"):
+        # The classic pickle-era bug: a model passed to a task is a stale snapshot by
+        # the time the task runs. Pass the key and load fresh data inside the task.
+        raise TypeError(
+            f"{name} is a Django model instance and can't be a task argument. "
+            f"Pass its primary key (obj.pk) and load it inside the task with "
+            f"{name}.objects.get(pk=...), so the task works with current data."
+        )
+    if hasattr(obj, "model") and hasattr(obj, "query") and hasattr(obj, "values_list"):
+        raise TypeError(
+            f"{name} (a Django queryset) can't be a task argument. "
+            'Pass a list of primary keys (list(qs.values_list("pk", flat=True))) and query inside the task.'
+        )
     raise TypeError(
-        f"Object of type {type(obj).__name__} is not JSON serializable. "
+        f"Object of type {name} is not JSON serializable. "
         "Pass primitive values (ids, strings, numbers) to tasks instead of objects."
     )
 
