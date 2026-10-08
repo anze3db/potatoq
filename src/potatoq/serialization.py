@@ -2,8 +2,10 @@
 
 Pickle is never used: it turns broker write access into remote code execution. Plain
 JSON loses types that tasks commonly pass (datetimes, UUIDs, Decimals), so they are
-encoded as ``{"__type__": ..., "__value__": ...}`` objects, the same convention
-kombu uses, and decoded back on the other side.
+encoded as ``{"__potatoq__": "<type>", "v": <value>}`` objects and decoded back on the
+other side. The marker key is namespaced so ordinary user data can't be mistaken for it
+(kombu's ``__type__``/``__value__`` convention can collide with application dicts), and
+a marker the decoder doesn't understand is left as a plain dict instead of failing.
 """
 
 from __future__ import annotations
@@ -20,8 +22,8 @@ from typing import Any
 
 from .exceptions import RemoteError
 
-_TYPE = "__type__"
-_VALUE = "__value__"
+_TYPE = "__potatoq__"
+_VALUE = "v"
 
 
 def _default(obj: Any) -> Any:
@@ -88,7 +90,10 @@ def _object_hook(obj: dict[str, Any]) -> Any:
     if len(obj) == 2 and _TYPE in obj and _VALUE in obj:
         decoder = _DECODERS.get(obj[_TYPE])
         if decoder is not None:
-            return decoder(obj[_VALUE])
+            try:
+                return decoder(obj[_VALUE])
+            except (TypeError, ValueError, ArithmeticError):
+                pass  # not ours after all (or corrupt): keep the data as sent
     return obj
 
 

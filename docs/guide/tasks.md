@@ -62,10 +62,10 @@ broker write access equal to code execution. It also invites a classic bug: pass
 Django model to a task ships a snapshot that is stale, or broken, by the time the
 worker runs it.
 
-These types round-trip unchanged: `datetime`, `date`, `time`, `timedelta`, `UUID`,
-`Decimal`, `bytes` and `set`. Enums and paths are sent as their values, and Django's
-lazy translation strings as plain text. Anything else fails when you call `.delay()`,
-in your web process, not later on the worker:
+Besides plain JSON (strings, numbers, booleans, `None`, lists and dicts), a few common
+types round-trip, and a few more are converted on the way
+([details below](#what-goes-through)). Anything else fails when you call `.delay()`, in
+your web process, not later on the worker:
 
 ```pycon
 >>> send_receipt.delay(order)
@@ -92,6 +92,51 @@ send_receipt.delay(order.pk)
 Arguments are also checked against the function signature when you enqueue, so
 `resize.delay(1, 2, 3)` raises immediately. Eager mode (`task_always_eager`) still
 round-trips arguments through the serializer, so tests catch these mistakes too.
+
+### What goes through
+
+| You send | The task receives |
+|---|---|
+| `str`, `int`, `float`, `bool`, `None`, `list`, `dict` | the same |
+| `datetime`, `date`, `time`, `timedelta` | the same. Naive datetimes stay naive; aware ones keep their UTC offset |
+| `UUID`, `Decimal` | the same, exactly |
+| `bytes`, `bytearray`, `memoryview` | `bytes` (sent as base64, about a third larger) |
+| `set`, `frozenset` | `set` |
+| `tuple`, named tuples | `list` |
+| dict keys that are `int`, `float`, `bool` or `None` | `str` keys: `{1: "a"}` arrives as `{"1": "a"}` |
+| `Enum` members | their value: `Color.RED` arrives as `"red"` |
+| `pathlib.Path` and other path-like objects | `str` |
+| Django lazy strings (`gettext_lazy`) | `str`, translated in the language active when you call `.delay()` |
+| objects with a `__json__()` method | whatever `__json__()` returns (usually a dict), not the object |
+| Django models and querysets | rejected, with a hint to pass primary keys |
+| dataclasses, `deque`, `range`, generators, `Fraction`, `complex`, other objects | rejected |
+| dict keys that are tuples or other objects | rejected |
+
+### Limitations
+
+JSON is a smaller vocabulary than Python, so a few things need care:
+
+- **Types are lost on conversion.** Tuples arrive as lists, integer dict keys as
+  strings, enums as plain values. If the task needs the type back, rebuild it:
+  `Color(color)`, `{int(k): v for k, v in counts.items()}`.
+- **Time zones become fixed offsets.** An aware datetime in `Europe/Ljubljana` arrives
+  with a `+01:00` offset, not the zone, so adding a day across a DST change gives a
+  different wall-clock time. Send UTC, or send the zone name as a separate argument.
+- **Objects don't survive.** There is no way to send an instance and get the same
+  class back, on purpose: a worker may run different code than the web process that
+  enqueued it, and an object's state is stale by the time the task runs. Send ids or
+  plain dicts and build the object inside the task. `__json__()` helps with the sending
+  side, but the task still receives a dict.
+- **Payloads should stay small.** Every argument is stored in the broker until the task
+  finishes, and `bytes` grow by a third. Store files and large blobs elsewhere (S3,
+  the database) and pass a key.
+- **Numbers are exact.** Big integers stay exact and `Decimal` keeps its digits, but a
+  `float` is still a float: use `Decimal` for money. `NaN` and infinity go through.
+- **Results follow the same rules.** A task's return value is serialized the same way
+  when results are stored, so returning a model instance fails the task with the same
+  `TypeError`. Return ids or plain data.
+- **Dicts of the form `{"__potatoq__": ..., "v": ...}` are reserved** for the types
+  above. Any other dict arrives as you sent it.
 
 ## `async def` tasks
 

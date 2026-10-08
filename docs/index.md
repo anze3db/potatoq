@@ -98,6 +98,7 @@ $ potatoq -A proj worker
 | Long tasks on Redis | <span class="pq-bad">re-run every hour</span> | <span class="pq-good">leases renewed while running</span> |
 | Time limits | none | <span class="pq-good">30 min, soft 30 s earlier</span> |
 | Failed tasks | discarded | <span class="pq-good">dead-letter store, replayable</span> |
+| Task arguments | pickle is one setting away; <span class="pq-bad">stale Django models</span> | <span class="pq-good">JSON only; models rejected at `.delay()` with a hint</span> |
 | `.delay()` inside `atomic()` | sent immediately | <span class="pq-good">sent on commit</span> |
 | Scheduler | separate `beat` process | <span class="pq-good">built into every worker, deduplicated</span> |
 | `async def` tasks | unsupported | <span class="pq-good">supported</span> |

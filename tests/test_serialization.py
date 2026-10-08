@@ -69,3 +69,34 @@ def test_wire_format_is_compact_and_versioned():
     newer = {**wire, "v": 99}
     with pytest.raises(ValueError, match="upgrade potatoq"):
         Message.from_dict(newer)
+
+
+def test_user_dicts_are_never_mistaken_for_type_markers():
+    # kombu-style keys are ordinary data here
+    data = {"__type__": "uuid", "__value__": "not-a-uuid"}
+    assert serialization.loads(serialization.dumps(data)) == data
+    # an unknown or malformed marker (e.g. from a newer version) stays a plain dict
+    unknown = {"__potatoq__": "from-the-future", "v": 1}
+    assert serialization.loads(serialization.dumps(unknown)) == unknown
+    broken = {"__potatoq__": "uuid", "v": "not-a-uuid"}
+    assert serialization.loads(serialization.dumps(broken)) == broken
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ((1, 2), [1, 2]),  # tuples become lists
+        ({1: "a"}, {"1": "a"}),  # dict keys become strings
+        (frozenset({1}), {1}),  # frozensets come back as sets
+        (Color.RED, "red"),  # enums are sent as their value
+        (float("inf"), float("inf")),
+        (2**80, 2**80),  # big ints are exact
+    ],
+)
+def test_documented_json_conversions(value, expected):
+    assert serialization.loads(serialization.dumps(value)) == expected
+
+
+def test_non_string_tuple_keys_are_rejected():
+    with pytest.raises(TypeError):
+        serialization.dumps({(1, 2): "x"})

@@ -74,9 +74,6 @@ reproducer; most need an unusual setup or a crash at the wrong moment.
 - [ ] **`group` and `chord` ignore `using=` and `enqueue_on_commit`**, from the call and
   from their tasks, so a group inside a SQLAlchemy session or a non-default Django
   database is sent before COMMIT. Fix: pass them to `app.publish` like `apply_async`.
-- [ ] **A plain dict can be decoded as a tagged value.** A task argument like
-  `{"__type__": "datetime", "__value__": "…"}` arrives as a `datetime`. Fix: escape
-  dicts that use the tag keys when encoding.
 - [ ] **Postgres wake-ups are delayed after an enqueue inside a transaction.** Its
   `NOTIFY` only goes out at COMMIT but still starts the 50 ms debounce, so other
   enqueues in that window wait for the next poll (up to `poll_interval`). Nothing is lost.

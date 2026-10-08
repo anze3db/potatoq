@@ -51,6 +51,7 @@ Every Celery deployment eventually learns these the hard way. In Potatoq they ar
 | Time limits | none | **30 min hard, soft 30 s earlier** |
 | Failed tasks | gone | **dead-letter store** you can list and replay (`potatoq dead list/retry`) |
 | Retries | fixed 180 s | **exponential backoff with jitter** |
+| Task arguments | pickle is one setting away and widely enabled to pass Django models, which arrive stale; eager mode skips serialization | **JSON only.** Models, querysets and other objects fail at `.delay()` with a hint to pass the primary key; eager mode serializes too |
 | Memory leaks | processes live forever | **recycled every 1000 tasks** (`max_memory_per_child="512MB"` available) |
 | Concurrency | host CPU count (over-subscribes containers) | **CPUs actually available** (affinity + cgroup quota) |
 | SIGTERM | waits forever, then Kubernetes SIGKILLs | **25 s grace, then requeue** unfinished tasks |

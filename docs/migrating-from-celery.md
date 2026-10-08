@@ -49,6 +49,7 @@ existing classic queue. Pick new queue names rather than reusing Celery's.
 | Area | Celery | Potatoq | What to do |
 |---|---|---|---|
 | Delivery | at-most-once by default | at-least-once | Make tasks idempotent. With `acks_late` you already had to. |
+| Serializer | JSON, or pickle if you enabled it | JSON only | If you used pickle to pass model instances or other objects, pass primary keys and load inside the task. `.delay()` tells you which argument it can't send. |
 | `.delay()` inside a DB transaction | sent immediately | sent on commit, dropped on rollback | Nothing; this fixes `DoesNotExist` races. Opt out per task with `enqueue_on_commit=False` or globally with `task_enqueue_on_commit = False`. |
 | Time limit | none | 30 min hard, soft 30 s earlier | Raise it for long tasks: `@app.task(time_limit=4 * 3600)`. |
 | `self.retry()` without countdown | 180 s | exponential backoff (about 10 s, 20 s, 40 s …) | Set `default_retry_delay` on the task (or `task_retry_backoff = False`) to get the old behaviour. |
