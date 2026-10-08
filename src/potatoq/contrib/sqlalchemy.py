@@ -8,14 +8,21 @@
         send_welcome.delay(user.id)   # sent after COMMIT, dropped on ROLLBACK
 
 Savepoints work like Django's: what a rolled-back ``begin_nested()`` deferred is
-dropped, and releasing a savepoint sends nothing until the outer COMMIT.
+dropped, and releasing a savepoint sends nothing until the outer COMMIT. Ending the
+transaction any other way (``rollback()``, ``close()``, ``reset()``) drops it all.
 
-Tasks are only deferred once the transaction has written something: SQLAlchemy 2.0
-begins a transaction on any query, and a read-only request that never commits must
-not drop its tasks. When the broker is the same database as the session (Postgres or SQLite), the task
-rows are written through the session's own connection instead, so they commit
-atomically with your data. Works for ``Session``, ``scoped_session``, Flask-SQLAlchemy
-and ``AsyncSession`` (its sync session fires the same events).
+Tasks are only deferred once the transaction has written something (any statement but
+a SELECT, through the session or its connections) or has pending objects to flush:
+SQLAlchemy 2.0 begins a transaction on any query, and a read-only request that never
+commits must not drop its tasks. When the broker is the same database as the session
+(Postgres or SQLite), the task rows are written through the session's own connection
+instead, so they commit atomically with your data. Works for ``Session``,
+``scoped_session``, Flask-SQLAlchemy and ``AsyncSession`` (its sync session fires the
+same events; the broker's code is synchronous, so with the same database the tasks are
+sent after COMMIT instead of inside the transaction).
+
+If sending after COMMIT fails (the broker is down), the error is logged; the commit
+itself still succeeds and the other deferred tasks are still sent.
 
 To pick a session explicitly: ``task.apply_async(args, using=session)``.
 """
@@ -37,17 +44,45 @@ if TYPE_CHECKING:
 logger = logging.getLogger("potatoq.sqlalchemy")
 
 _KEY = "potatoq_on_commit"
+_WROTE = "potatoq_wrote"
+_COMMITTED = "potatoq_committed"
+_WATCHED = "potatoq_watched"
 _sessions: ContextVar[tuple[weakref.ref[Session], ...]] = ContextVar("potatoq_sqla_sessions", default=())
 _installed: set[int] = set()
 
 
-def _after_begin(session: Session, transaction: Any, connection: Any) -> None:
+def _after_transaction_create(session: Session, transaction: Any) -> None:
+    """Track the session from ``begin()`` or autobegin (``add()``, a query), not only
+    once it has a connection: ``s.add(user); task.delay()`` must already defer."""
+    if transaction.parent is not None:
+        return
     current = _sessions.get()
     if not any(ref() is session for ref in current):
         _sessions.set((*tuple(r for r in current if r() is not None), weakref.ref(session)))
 
 
-_WROTE = "potatoq_wrote"
+_READ_ONLY = ("select", "show", "explain", "pragma", "values")  # not "with": WITH ... INSERT
+
+
+def _writes(statement: str, context: Any) -> bool:
+    if context is None or context.is_text:  # text() and exec_driver_sql(): look at the SQL
+        return not statement.lstrip().lower().startswith(_READ_ONLY)
+    return bool(context.is_crud or context.isddl)  # not SELECTs or SQLAlchemy's SAVEPOINTs
+
+
+def _after_begin(session: Session, transaction: Any, connection: Any) -> None:
+    """Watch what the transaction runs on this connection: ORM flushes, bulk
+    operations and Core statements on ``session.connection()`` all end up here."""
+    if transaction.parent is not None:
+        return  # a savepoint on a connection that is already watched
+    ref = weakref.ref(session)
+
+    def watch(conn: Any, cursor: Any, statement: str, parameters: Any, context: Any, executemany: bool) -> None:
+        if _writes(statement, context) and (owner := ref()) is not None:
+            owner.info[_WROTE] = True
+
+    event.listen(connection, "before_cursor_execute", watch)
+    session.info.setdefault(_WATCHED, []).append((connection, watch))
 
 
 def _defer(session: Session, fn: Any) -> None:
@@ -56,12 +91,28 @@ def _defer(session: Session, fn: Any) -> None:
 
 
 def _after_commit(session: Session) -> None:
-    if session.in_nested_transaction():
-        return  # a savepoint was released; the real COMMIT is still to come
-    session.info.pop(_WROTE, None)
-    callbacks = session.info.pop(_KEY, None)
-    for _, fn in callbacks or ():
-        fn()
+    if not session.in_nested_transaction():  # releasing a savepoint is not the COMMIT
+        session.info[_COMMITTED] = True
+
+
+def _after_transaction_end(session: Session, transaction: Any) -> None:
+    """The outermost transaction is over: run what was deferred if it committed, drop
+    it otherwise. Unlike ``after_commit``, the session has already left the transaction
+    here, so a failing callback can't make ``commit()`` raise for committed data or
+    leave the session stuck; it's logged and the rest still run."""
+    if transaction.parent is not None:
+        return
+    info = session.info
+    for connection, watch in info.pop(_WATCHED, ()):
+        event.remove(connection, "before_cursor_execute", watch)
+    info.pop(_WROTE, None)
+    callbacks = info.pop(_KEY, None) or ()
+    if info.pop(_COMMITTED, False):
+        for _, fn in callbacks:
+            try:
+                fn()
+            except Exception:
+                logger.exception("Callback deferred to COMMIT failed: %r", fn)
 
 
 def _within(transaction: Any, savepoint: Any) -> bool:
@@ -78,25 +129,6 @@ def _after_soft_rollback(session: Session, previous: Any) -> None:
         callbacks = session.info.get(_KEY)
         if callbacks:
             session.info[_KEY] = [(tx, fn) for tx, fn in callbacks if not _within(tx, previous)]
-    elif not session.in_transaction():
-        session.info.pop(_WROTE, None)
-        session.info.pop(_KEY, None)
-
-
-def _after_flush(session: Session, flush_context: Any) -> None:
-    session.info[_WROTE] = True
-
-
-_READ_ONLY = ("select", "with", "show", "explain", "pragma", "values")
-
-
-def _do_orm_execute(state: Any) -> None:
-    if state.is_select:
-        return
-    sql = getattr(state.statement, "text", None)  # text("...") isn't flagged as a select
-    if isinstance(sql, str) and sql.lstrip().lower().startswith(_READ_ONLY):
-        return
-    state.session.info[_WROTE] = True
 
 
 def _writing(session: Session) -> bool:
@@ -124,9 +156,12 @@ def _broker_matches(broker: Any, session: Session) -> bool:
     if not getattr(broker, "transactional", False):
         return False
     try:
-        url = session.get_bind().engine.url
+        bind = session.get_bind()
+        url = bind.engine.url
     except Exception:
         return False
+    if bind.dialect.is_async:
+        return False  # AsyncSession: the broker can't write through an async driver; send after COMMIT
     from .django import _canonical
 
     try:
@@ -146,6 +181,8 @@ class SQLAlchemyTransactionHook:
         if session is None:
             return False
         if _broker_matches(app.broker, session):
+            # The session's connection (acquired now if the transaction has none yet),
+            # so the task rows commit or roll back with the data.
             dbapi = session.connection().connection.driver_connection
             app.publish_now(messages, connection=dbapi)
             return True
@@ -165,10 +202,10 @@ def install(app: Potatoq, target: Any = Session) -> None:
     if hasattr(target, "session_factory"):  # scoped_session
         target = target.session_factory
     if id(target) not in _installed:
+        event.listen(target, "after_transaction_create", _after_transaction_create)
         event.listen(target, "after_begin", _after_begin)
         event.listen(target, "after_commit", _after_commit)
-        event.listen(target, "after_flush", _after_flush)
-        event.listen(target, "do_orm_execute", _do_orm_execute)
+        event.listen(target, "after_transaction_end", _after_transaction_end)
         event.listen(target, "after_soft_rollback", _after_soft_rollback)
         _installed.add(id(target))
     app.add_transaction_hook(SQLAlchemyTransactionHook())

@@ -14,7 +14,7 @@ A rollback is just as bad: the task runs for data that never existed.
 ## What potatoq does
 
 Inside a transaction (Django `atomic()` or `ATOMIC_REQUESTS`, or an SQLAlchemy session
-that has written something), `delay()` **waits for the commit**:
+that has written or added something), `delay()` **waits for the commit**:
 
 - **COMMIT** → the task is sent
 - **ROLLBACK** → the task is never sent

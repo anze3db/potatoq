@@ -63,7 +63,9 @@ CELERY_BROKER_URL = "redis://localhost:6379/0"
 ```
 
 `POTATOQ_DATABASE = "queue"` uses a different database alias as the broker, for example
-a separate database for the queue.
+a separate database for the queue. `.delay()` still follows the caller's transaction (on
+`default`, or the alias passed as `using=`): it waits for that COMMIT and is sent after
+it, since the task row can't be written inside a transaction on another database.
 
 ## Keeping your `celery.py`
 

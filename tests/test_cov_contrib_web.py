@@ -200,8 +200,9 @@ def test_savepoint_rollback_keeps_outer_tasks(mem_app, engine):
 
 
 def test_broker_match_detection(tmp_path):
-    def session_for(url):
-        return SimpleNamespace(get_bind=lambda: SimpleNamespace(engine=SimpleNamespace(url=make_url(url))))
+    def session_for(url, is_async=False):
+        bind = SimpleNamespace(engine=SimpleNamespace(url=make_url(url)), dialect=SimpleNamespace(is_async=is_async))
+        return SimpleNamespace(get_bind=lambda: bind)
 
     db = tmp_path / "x.db"
     sqlite_broker = SimpleNamespace(transactional=True, url=f"sqlite:///{db}")
@@ -215,3 +216,7 @@ def test_broker_match_detection(tmp_path):
     assert _broker_matches(bad_port, session_for("postgresql://localhost/app")) is False
     assert _broker_matches(SimpleNamespace(transactional=False, url=pg_broker.url), session_for(pg_broker.url)) is False
     assert _broker_matches(pg_broker, Session()) is False  # unbound session
+    # AsyncSession: the broker's sync code can't use an async driver's connection, so
+    # the same database falls back to sending after COMMIT.
+    assert _broker_matches(pg_broker, session_for("postgresql+asyncpg://localhost/app", is_async=True)) is False
+    assert _broker_matches(sqlite_broker, session_for(f"sqlite+aiosqlite:///{db}", is_async=True)) is False

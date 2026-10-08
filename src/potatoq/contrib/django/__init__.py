@@ -197,9 +197,12 @@ class DjangoTransactionHook:
     """Defers (or joins) publishing to the current ``transaction.atomic()`` block."""
 
     def _connection(self, using: Any) -> Any:
-        from django.db import connections
+        # The caller's transaction lives on ``using`` (default: Django's default alias,
+        # like ``transaction.on_commit``), not on the broker's POTATOQ_DATABASE alias;
+        # ``_same_database`` decides whether the broker is that database.
+        from django.db import DEFAULT_DB_ALIAS, connections
 
-        return connections[using or database_alias()]
+        return connections[using or DEFAULT_DB_ALIAS]
 
     def publish(self, app: Potatoq, messages: list[Message], using: Any) -> bool:
         from django.db import transaction
