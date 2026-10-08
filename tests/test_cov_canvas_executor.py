@@ -151,13 +151,17 @@ def test_redelivered_failure_rebuilds_errbacks(memory_app, add, tsum):
     def errback(task_id):
         pass
 
+    @memory_app.task
+    def body_errback(task_id):
+        pass
+
     message = add.build_message(
         [1, 2],
         {},
         link_error=errback.s(),
         group_id="g-failure",
         group_index=0,
-        chord={"callback": tsum.s().on_error(errback.s()).to_dict(), "size": 1},
+        chord={"callback": tsum.s().on_error(body_errback.s()).to_dict(), "size": 1},
     )
     memory_app.store_result(message.id, states.FAILURE, {"exc_type": "ValueError", "exc_message": ["boom"]}, "tb")
     outcome = _run(memory_app, message, delivery_count=2)
@@ -165,7 +169,7 @@ def test_redelivered_failure_rebuilds_errbacks(memory_app, add, tsum):
     callback_id = outcome.followups[1].args[0]
     assert [(m.task, m.args) for m in outcome.followups] == [
         (errback.name, [message.id]),
-        (errback.name, [callback_id]),
+        (body_errback.name, [callback_id]),
     ]
     with pytest.raises(ChordError, match="ValueError"):
         memory_app.AsyncResult(callback_id).get()

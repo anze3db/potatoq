@@ -30,7 +30,7 @@ from ..exceptions import (
     Retry,
     WorkerTerminate,
 )
-from ..message import Message, new_id
+from ..message import Message
 from ..task import Context
 
 if TYPE_CHECKING:
@@ -152,64 +152,18 @@ def _callbacks(app: Potatoq, sigs: list[dict[str, Any]], args: tuple[Any, ...], 
 
 def signature_to_messages(app: Potatoq, sig: Signature, args: tuple[Any, ...], parent: Message | None) -> list[Message]:
     """Turn a (possibly composite) signature into messages, prepending ``args``."""
-    from ..canvas import _chain, _chord, group
+    from ..canvas import _messages
 
-    sig = sig.clone(args) if args else sig.clone()
-    parent_opts = {"parent_id": parent.id, "root_id": parent.root_id} if parent else {}
-    if isinstance(sig, _chain):
-        steps = sig._prepare_steps()
-        return signature_to_messages(app, steps[0], (), parent)
-    if isinstance(sig, group):
-        sig.freeze()
-        return [m for t in sig.tasks for m in signature_to_messages(app, t, (), parent)]
-    if isinstance(sig, _chord):
-        sig.freeze()
-        callback = sig.body.to_dict()
-        gid = sig["options"]["group_id"]
-        header = sig.tasks
-        if not header:
-            return signature_to_messages(app, sig.body, ([],), parent)
-        msgs = []
-        for t in header:
-            targs, tkwargs, topts = t._merge(None, None, None)
-            tid = topts.pop("task_id")
-            index = topts.pop("group_index")
-            topts.pop("group_id", None)
-            task = app.tasks[t.task]
-            msgs.append(
-                task.build_message(
-                    list(targs), tkwargs, tid, group_id=gid, group_index=index,
-                    chord={"callback": callback, "size": len(header)}, ignore_result=False,
-                    **{**parent_opts, **topts},
-                )
-            )  # fmt: skip
-        return msgs
-    targs, tkwargs, topts = sig._merge(None, None, None)
-    target = app.tasks.get(sig.task)
-    task_id = topts.pop("task_id", None)
-    if target is None:
-        msg = Message(
-            task=sig.task,
-            args=list(targs),
-            kwargs=tkwargs,
-            id=task_id or new_id(),
-            queue=topts.get("queue") or app.conf.task_default_queue,
-        )
-        msg.link = [s.to_dict() if isinstance(s, Signature) else s for s in topts.get("link", [])]
-        msg.link_error = [s.to_dict() if isinstance(s, Signature) else s for s in topts.get("link_error", [])]
-        if parent:
-            msg.parent_id, msg.root_id = parent.id, parent.root_id
-        return [msg]
-    link = topts.pop("link", None)
-    link_error = topts.pop("link_error", None)
-    return [
-        target.build_message(
-            list(targs), tkwargs, task_id, link=link, link_error=link_error, **{**parent_opts, **topts}
-        )
-    ]
+    return _messages(app, sig.clone(args) if args else sig.clone(), parent)
 
 
-def _chord_followups(app: Potatoq, message: Message, value: Any, failed_exc: BaseException | None) -> list[Message]:
+def _chord_followups(
+    app: Potatoq,
+    message: Message,
+    value: Any,
+    failed_exc: BaseException | None,
+    seen: list[dict[str, Any]] | None = None,
+) -> list[Message]:
     """Record a finished chord header task; return the callback message if it was the last."""
     if not message.chord or message.group_id is None:
         return []
@@ -223,19 +177,41 @@ def _chord_followups(app: Potatoq, message: Message, value: Any, failed_exc: Bas
     if errors:
         exc = serialization.exception_from_dict(errors[0]["__chord_error__"])
         chord_exc = ChordError(f"Dependency of chord {message.group_id} raised {exc!r}")
-        callback_id = callback.id or new_id()
-        app.store_result(
-            callback_id, states.FAILURE, serialization.exception_to_dict(chord_exc), task_name=callback.task
-        )
-        errbacks = callback.options.get("link_error") or []
-        fake_parent = Message(task=callback.task, id=callback_id, root_id=message.root_id)
-        return _callbacks(
-            app,
-            [Signature.from_dict(e, app=app).to_dict() if isinstance(e, dict) else e for e in errbacks],
-            (callback_id,),
-            fake_parent,
-        )
+        return _fail_signature(app, callback, chord_exc, message, [] if seen is None else seen, store=True)
     return signature_to_messages(app, callback, (results,), message)
+
+
+def _failure_followups(
+    app: Potatoq, message: Message, exc: BaseException, seen: list[dict[str, Any]] | None = None
+) -> list[Message]:
+    """What a failed ``message`` sets off: its errbacks, its chord's bookkeeping, and the
+    failure of the tasks linked after it (the rest of its chain), which will never run.
+    ``seen`` makes an errback shared by several of them (a chain's) run only once."""
+    seen = [] if seen is None else seen
+    errbacks = []
+    for errback in message.link_error:
+        if errback not in seen:
+            seen.append(errback)
+            errbacks.append(errback)
+    followups = _callbacks(app, errbacks, (message.id,), message)
+    followups += _chord_followups(app, message, None, exc, seen)
+    for raw in message.link:
+        sig = Signature.from_dict(raw, app=app)
+        # Only frozen signatures have an id someone may be waiting on.
+        followups += _fail_signature(app, sig, exc, message, seen, store=sig.id is not None)
+    return followups
+
+
+def _fail_signature(
+    app: Potatoq, sig: Signature, exc: BaseException, parent: Message, seen: list[dict[str, Any]], store: bool
+) -> list[Message]:
+    """``sig`` will never run: fail every task it would have started, and what follows them."""
+    followups = []
+    for msg in signature_to_messages(app, sig, (), parent):
+        if store and not msg.ignore_result:
+            app.store_result(msg.id, states.FAILURE, serialization.exception_to_dict(exc), task_name=msg.task)
+        followups += _failure_followups(app, msg, exc, seen)
+    return followups
 
 
 def execute(
@@ -275,8 +251,7 @@ def execute(
         # its callbacks: rebuild them (their ids are fixed, so brokers dedupe repeats).
         if previous.state == states.FAILURE:
             exc = serialization.exception_from_dict(previous.result) if isinstance(previous.result, dict) else None
-            followups = _callbacks(app, message.link_error, (message.id,), message)
-            followups += _chord_followups(app, message, None, exc or Exception("failed"))
+            followups = _failure_followups(app, message, exc or Exception("failed"))
             if app.conf.task_dead_letter_failures:
                 return Outcome(
                     DEAD_LETTER,
@@ -459,8 +434,7 @@ def _on_failure(
         sender=task, task_id=message.id, exception=exc, args=message.args, kwargs=message.kwargs,
         traceback=exc.__traceback__, einfo=einfo,
     )  # fmt: skip
-    followups = _callbacks(app, message.link_error, (message.id,), message)
-    followups += _chord_followups(app, message, None, exc)
+    followups = _failure_followups(app, message, exc)
     return Outcome(COMPLETE, states.FAILURE, record=record, followups=followups, exc=exc, traceback=einfo.traceback)
 
 
@@ -487,11 +461,11 @@ def failure_outcome(app: Potatoq, message: Message, exc: BaseException, hostname
             traceback=None,
             einfo=None,
         )
-    followups = _callbacks(app, message.link_error, (message.id,), message)
     try:
-        followups += _chord_followups(app, message, None, exc)
+        followups = _failure_followups(app, message, exc)
     except Exception:
         logger.exception("Failed to record chord failure for %s", message.id)
+        followups = _callbacks(app, message.link_error, (message.id,), message)
     return Outcome(COMPLETE, states.FAILURE, record=record, followups=followups, exc=exc, traceback=traceback)
 
 
@@ -530,10 +504,13 @@ def settle(app: Potatoq, consumer: Any, delivery: Any, outcome: Outcome) -> None
 # --- eager execution -----------------------------------------------------------
 
 
-def execute_eagerly(app: Potatoq, message: Message, throw: bool = True) -> EagerResult:
+def execute_eagerly(
+    app: Potatoq, message: Message, throw: bool = True, _results: dict[str, EagerResult] | None = None
+) -> EagerResult:
     """``task.apply()``: run now, in this process, following retries and callbacks."""
     from ..result import EagerResult
 
+    results: dict[str, EagerResult] = {} if _results is None else _results
     while True:
         outcome = execute(app, message, is_eager=True, hostname="eager")
         if outcome.action == RETRY and outcome.retry_message is not None:
@@ -545,10 +522,16 @@ def execute_eagerly(app: Potatoq, message: Message, throw: bool = True) -> Eager
         app.backend.store_result(outcome.record, expires=app.conf.result_expires)
     for followup in outcome.followups:
         followup.eta = None
-        execute_eagerly(app, followup, throw=throw)
+        execute_eagerly(app, followup, throw=throw, _results=results)
+    if outcome.reason == "replaced" and message.id in results:
+        # The replacement inherited the id: its last task's result is this task's.
+        return results[message.id]
     if outcome.state == states.FAILURE and outcome.exc is not None:
         if throw:
             raise outcome.exc
-        return EagerResult(message.id, outcome.exc, states.FAILURE, outcome.traceback, app=app, name=message.task)
-    value = outcome.retval if outcome.state == states.SUCCESS else None
-    return EagerResult(message.id, value, outcome.state, app=app, name=message.task)
+        result = EagerResult(message.id, outcome.exc, states.FAILURE, outcome.traceback, app=app, name=message.task)
+    else:
+        value = outcome.retval if outcome.state == states.SUCCESS else None
+        result = EagerResult(message.id, value, outcome.state, app=app, name=message.task)
+    results[message.id] = result
+    return result

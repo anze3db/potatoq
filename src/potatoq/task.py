@@ -529,7 +529,7 @@ class Task:
         The current task ends and the replacement is enqueued atomically with its
         acknowledgement.
         """
-        from .canvas import maybe_signature
+        from .canvas import _ends_in_group, _join, maybe_signature
         from .exceptions import Replace
 
         request = self.request
@@ -539,14 +539,16 @@ class Task:
         if sig is None:
             raise TypeError("replace() needs a signature")
         sig = sig.clone()
+        if _ends_in_group(sig):
+            # This task has a single result: collect the group's results into a list.
+            sig = _join(sig, self.app.tasks["potatoq.accumulate"].s(index=0))
         message = request.message
-        sig.set(task_id=request.id)
-        if message.link:
-            sig["options"]["link"] = [*sig["options"].get("link", []), *message.link]
-        if message.link_error:
-            sig["options"]["link_error"] = [*sig["options"].get("link_error", []), *message.link_error]
-        if message.chord:
-            sig.set(chord=message.chord, group_id=message.group_id, group_index=message.group_index)
+        # A chain or chord passes the id and chord membership on to its last task.
+        sig.freeze(request.id, group_id=message.group_id, chord=message.chord, group_index=message.group_index)
+        for callback in message.link:
+            sig.link(callback)
+        for errback in message.link_error:
+            sig.link_error(errback)
         raise Replace(sig)
 
     @property
