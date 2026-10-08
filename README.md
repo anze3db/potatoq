@@ -19,14 +19,14 @@ The defaults now come from years of community post-mortems, the Ruby job-queue w
 Procrastinate, Oban/River designs). Each backend is implemented with its own native
 primitives instead of a lowest-common-denominator abstraction.
 
-- **Django-native**: add one app to `INSTALLED_APPS`, no `celery.py`. `.delay()` inside
-  `atomic()` is sent on commit, and potatoq is also a backend for Django 6's built-in
-  [`django.tasks`](docs/integrations/django-tasks.md).
 - **Free-threaded Python** (3.14t, 3.15t): tested in CI, and potatoq never turns the
   GIL back on, so `--threads` runs CPU-bound tasks in parallel in one process: 3.4×
   with 4 threads, in half the memory of 4 processes ([numbers](#free-threaded-python)).
-- **JSON only, never pickle**: Django models and other objects are refused at `.delay()`
-  with a hint, instead of arriving stale on the worker.
+- **Django tasks**: a backend for Django 6's built-in
+  [`django.tasks`](docs/integrations/django-tasks.md), sharing workers with
+  `@shared_task`. The classic setup works too: add `"potatoq.contrib.django"` to
+  `INSTALLED_APPS` (no `celery.py` needed), and `.delay()` inside `atomic()` is sent on
+  commit.
 
 ```python
 from potatoq import Potatoq  # or: from potatoq import Celery
@@ -54,7 +54,6 @@ Every Celery deployment eventually learns these the hard way. In Potatoq they ar
 |---|---|---|
 | Acknowledgement | before the task runs (crash = lost task) | **after it finishes** (at-least-once) |
 | Worker process killed (OOM, segfault) | task acked and lost | **requeued**, dead-lettered after 5 crashes (poison-message guard) |
-| Serializer | JSON, but pickle is one setting away, and often turned on to pass Django models (which arrive stale) | **JSON only, never pickle.** Models and querysets fail at `.delay()` with a hint to pass the primary key |
 | Prefetch | 4 × concurrency (short tasks wait behind long ones) | **one task per idle process** |
 | ETA / countdown | held in worker RAM; Redis `visibility_timeout` re-runs them; RabbitMQ's 30 min timeout kills them | **stored by the broker** (sorted set, `run_at` column, TTL cascade) |
 | Long tasks on Redis | redelivered every hour (`visibility_timeout`) | **leases renewed** by the worker while the task runs |
