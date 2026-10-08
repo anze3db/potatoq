@@ -101,6 +101,8 @@ class Potatoq:
         self.tasks = TaskRegistry()
         self._lock = threading.RLock()
         self._broker: Broker | None = None
+        #: Set by the Django integration when the broker is a Django database.
+        self._broker_follows: Any = None
         self._backend: Broker | bool | None = False  # False = not resolved yet
         self._transaction_hooks: list[Any] = []
         self._task_resolvers: list[Callable[[str], BaseTask | None]] = []
@@ -373,8 +375,17 @@ class Potatoq:
             logger.debug("Could not derive broker from Django DATABASES", exc_info=True)
             return None
 
+    def _follow_database(self) -> None:
+        if self._broker_follows is not None:
+            url = self._broker_follows.changed()
+            if url is not None:
+                with self._lock:
+                    self._reset_connections()
+                    self.conf.broker_url = url
+
     @property
     def broker(self) -> Broker:
+        self._follow_database()
         if self._broker is None or self._pid != os.getpid():
             with self._lock:
                 if self._pid != os.getpid():
@@ -390,6 +401,7 @@ class Potatoq:
     @property
     def backend(self) -> Broker | None:
         """Where results are stored (the broker itself unless ``result_backend`` is set)."""
+        self._follow_database()
         if self._backend is False or self._pid != os.getpid():
             with self._lock:
                 if self._pid != os.getpid():

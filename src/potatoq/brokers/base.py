@@ -158,6 +158,9 @@ class Broker:
     transactional: bool = False
     #: Queued messages can't be deleted, so revocations are checked at run time.
     needs_revoke_check: bool = False
+    #: ``enqueue_periodic`` claims outlive a worker restart, so a starting scheduler can
+    #: safely send runs that fell due just before it started.
+    durable_periodic_claims: bool = True
 
     def __init__(self, url: str, app: Potatoq, **options: Any):
         self.url = url

@@ -102,20 +102,19 @@ def app():
 
 
 def test_inspect_reports_live_workers_from_heartbeats(app):
-    @app.task(name="core.add")
-    def add(x, y):
-        return x + y
-
     inspect = app.control.inspect()
     assert inspect.ping() is None
-    app.broker.heartbeat("w1@a:1", {"hostname": "w1@a", "queues": ["default"], "running": ["t1"]})
+    app.broker.heartbeat(
+        "w1@a:1", {"hostname": "w1@a", "queues": ["default"], "running": ["t1"], "registered": ["core.add"]}
+    )
     app.broker.heartbeat("w2@b:2", {"hostname": "w2@b", "queues": ["other"]})
     app.broker.workers_["dead@c:3"] = {"hostname": "dead@c", "heartbeat": time.time() - 3600}
 
     assert inspect.ping() == {"w1@a:1": {"ok": "pong"}, "w2@b:2": {"ok": "pong"}}
     assert inspect.active() == {"w1@a:1": [{"id": "t1"}], "w2@b:2": []}
     assert inspect.active_queues()["w2@b:2"] == [{"name": "other"}]
-    assert inspect.registered()["w1@a:1"] == ["core.add"]
+    # What each worker registered, not this process's registry.
+    assert inspect.registered() == {"w1@a:1": ["core.add"], "w2@b:2": []}
     assert inspect.scheduled() == inspect.reserved() == {"w1@a:1": [], "w2@b:2": []}
     assert inspect.stats()["w1@a:1"]["hostname"] == "w1@a"
 
@@ -388,6 +387,7 @@ def test_retry_messages():
     assert str(Retry("custom message")) == "custom message"
     assert str(Retry(exc=ValueError("x"), when=when)) == f"Retry at {when}: ValueError('x')"
     assert str(Retry(when=30)) == "Retry in 30s"
+    assert str(Retry(when=8.782365561677146)) == "Retry in 8.78s"
 
 
 # --- testing.drain --------------------------------------------------------------

@@ -341,8 +341,7 @@ class Child:
             self.exit_code = 3
             self.stopping = True
             return False
-        level = logging.INFO if outcome.state in ("SUCCESS", "RETRY", "IGNORED") else logging.WARNING
-        logger.log(level, "Task %s[%s] %s in %.3fs", message.task, message.id, outcome.state.lower(), outcome.runtime)
+        executor.log_done(message, outcome)
         self._report({"e": "done", "id": message.id})
         return True
 

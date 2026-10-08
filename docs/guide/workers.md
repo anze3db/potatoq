@@ -17,7 +17,7 @@ $ potatoq -A proj worker -Q default,emails -c 8 -l info
 | `--shutdown-timeout` | `25` | Seconds running tasks get on `SIGTERM` |
 | `--time-limit`, `--soft-time-limit` | 1800 / auto | App-wide defaults |
 | `--no-scheduler` | | Don't run periodic tasks on this worker |
-| `-n`, `--hostname` | `potatoq@<host>` | |
+| `-n`, `--hostname` | `potatoq@<host>` | `%h` (host.domain), `%n` (host) and `%d` (domain) are expanded, as in Celery |
 
 Celery's `-B`, `-O fair`, `-E`, `--autoscale`, `--prefetch-multiplier`, `--without-gossip`,
 `--without-mingle` and `--without-heartbeat` are accepted and ignored: each is either the
@@ -44,6 +44,14 @@ flowchart LR
   idle it blocks on the broker's wake-up mechanism, so it doesn't busy-poll. It reports
   each task it starts to the supervisor over a pipe, so the supervisor can requeue that
   task if the child dies.
+
+!!! note "macOS"
+    On macOS the worker restarts itself once at startup (same PID, same arguments) with
+    `OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES`. Without it, macOS kills forked processes
+    that touch some system frameworks, such as `socket.getfqdn()` in Django's
+    `send_mail`, once the parent has started a thread. Many SDKs start one at import
+    (logfire, Sentry, New Relic). The variable only works when set before the process
+    starts, so setting it yourself skips the restart.
 
 ## Threads
 
@@ -116,6 +124,32 @@ free-threaded build are the leaner one.
 25 seconds fits inside Kubernetes' and Heroku's 30-second grace periods. Set your
 `terminationGracePeriodSeconds` a few seconds above `--shutdown-timeout`.
 
+### systemd
+
+```ini title="/etc/systemd/system/myapp-worker.service"
+[Unit]
+Description=myapp potatoq worker
+After=network.target postgresql.service
+
+[Service]
+WorkingDirectory=/srv/myapp
+Environment=DJANGO_SETTINGS_MODULE=mysite.settings
+ExecStart=/srv/myapp/.venv/bin/python manage.py potatoq worker -c 2
+Restart=always
+# Send SIGTERM to the supervisor only, and let it stop its processes.
+KillMode=mixed
+TimeoutStopSec=35
+
+[Install]
+WantedBy=multi-user.target
+```
+
+One unit per host is enough: there is no `multi` command to manage, and no separate
+`beat` service, because every worker runs the scheduler. Restart workers one at a time
+when deploying to several hosts, so periodic runs aren't missed
+([details](periodic-tasks.md#missed-runs)). Wrappers like `newrelic-admin run-program`
+go in front of `python` as usual.
+
 ## Signals
 
 The usual Celery signals are available from `potatoq.signals`: `task_prerun`,
@@ -141,11 +175,25 @@ The worker only configures logging if nothing else has. It never replaces handle
 set up (Celery hijacks the root logger by default). Records emitted inside a task carry
 `task_id` and `task_name`.
 
+So in a Django project with its own `LOGGING`, the worker's lines look like the rest of
+your logs. If your root handler has no formatter, they have no timestamp or level
+either; add one, for example:
+
+```python title="settings.py"
+LOGGING = {
+    "version": 1,
+    "formatters": {"plain": {"format": "[%(asctime)s %(levelname)s %(processName)s] %(message)s"}},
+    "handlers": {"console": {"class": "logging.StreamHandler", "formatter": "plain"}},
+    "root": {"handlers": ["console"], "level": "INFO"},
+}
+```
+
 ## Inspecting
 
 ```console
 $ potatoq -A proj status
 potatoq@web-1:4121:9c1e2a: queues=default concurrency=8 running=3 heartbeat=2s ago
+potatoq@web-2:4180:1f0b7d: queues=default concurrency=8 (2 processes x 4 threads) running=1 heartbeat=1s ago
 $ potatoq -A proj inspect active
 ```
 

@@ -97,6 +97,7 @@ class RabbitMQBroker(Broker):
     schemes = ("amqp", "amqps")
     supports_results = False
     transactional = False
+    durable_periodic_claims = False  # the leader remembers sent runs in memory
     needs_revoke_check = True
 
     def __init__(self, url: str, app: Any, **options: Any):

@@ -107,7 +107,37 @@ def configure_app(app: Potatoq) -> None:
         url = database_url()
         if url:
             conf.broker_url = url
+            app._broker_follows = DatabaseFollower(database_alias())
     install(app)
+
+
+class DatabaseFollower:
+    """Keeps a broker derived from ``DATABASES`` pointed at the database Django uses now.
+
+    Django's test runner renames the database (``test_<name>``, or an in-memory SQLite
+    database) after potatoq was configured. Without this, tests would enqueue into the
+    real database, where a running development worker would pick the tasks up."""
+
+    def __init__(self, alias: str) -> None:
+        self.alias = alias
+        self.name = self._name()
+
+    def _name(self) -> Any:
+        from django.db import connections
+
+        return connections.databases[self.alias].get("NAME")
+
+    def changed(self) -> str | None:
+        """The new broker URL if the database was switched since the last call."""
+        name = self._name()
+        if name == self.name:
+            return None
+        self.name = name
+        # An in-memory test database can't be shared with a separate broker connection;
+        # keep tasks in this process instead (run them with potatoq.testing.drain).
+        url = database_url(self.alias) or "memory://"
+        logger.info("Django switched database %r to %r; potatoq now uses %s", self.alias, name, url)
+        return url
 
 
 def install(app: Potatoq, *, bind_backends: bool = True) -> None:
@@ -120,6 +150,7 @@ def install(app: Potatoq, *, bind_backends: bool = True) -> None:
     app.add_transaction_hook(DjangoTransactionHook())
     _bind_task_backends(app, bind_backends)
     if not getattr(install, "_signals_connected", False):
+        signals.worker_init.connect(_import_urlconf, weak=False, dispatch_uid="potatoq.django.urlconf")
         signals.task_prerun.connect(_close_old_connections, weak=False, dispatch_uid="potatoq.django.prerun")
         signals.task_postrun.connect(_close_old_connections, weak=False, dispatch_uid="potatoq.django.postrun")
         signals.worker_init.connect(_close_all, weak=False, dispatch_uid="potatoq.django.worker_init")
@@ -172,7 +203,22 @@ def _bind_task_backends(app: Potatoq, bind_backends: bool = True) -> None:
             backend.bind(app)
 
 
-def _close_old_connections(**kwargs: Any) -> None:
+def _import_urlconf(**kwargs: Any) -> None:
+    """Register tasks defined outside ``tasks.py`` (e.g. in views), like Celery's worker,
+    whose startup system checks import the URLconf."""
+    from importlib import import_module
+
+    urlconf = getattr(_settings(), "ROOT_URLCONF", None)
+    if urlconf:
+        try:
+            import_module(urlconf)
+        except Exception:
+            logger.exception("Could not import ROOT_URLCONF %r; tasks defined in views aren't registered", urlconf)
+
+
+def _close_old_connections(task: Any = None, **kwargs: Any) -> None:
+    if task is not None and task.request.is_eager:
+        return  # runs inside the caller's request, maybe inside its transaction
     from django.db import close_old_connections
 
     close_old_connections()

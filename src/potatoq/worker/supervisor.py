@@ -181,6 +181,7 @@ class Supervisor:
             "concurrency": self.concurrency,
             "threads": self.threads,
             "running": [task_id for c in self.children.values() for task_id in c.running],
+            "registered": sorted(n for n in self.app.tasks if not n.startswith("potatoq.")),
         }
 
     def _banner(self) -> None:
@@ -188,10 +189,13 @@ class Supervisor:
 
         broker_url = _redact(self.app.broker.url)
         backend = self.app.backend
+        results = _redact(backend.url) if backend else "disabled"
+        if backend and self.app.conf.task_ignore_result:
+            results = f"off by default (task_ignore_result; {results})"
         logger.info(
             "potatoq %s worker %s ready: broker=%s results=%s queues=%s concurrency=%d %s "
             "time_limit=%ss max_tasks_per_child=%s scheduler=%s",
-            __version__, self.hostname, broker_url, _redact(backend.url) if backend else "disabled",
+            __version__, self.hostname, broker_url, results,
             ",".join(self.queues), self.concurrency * self.threads,
             f"({self.concurrency} processes x {self.threads} threads)" if self.threads > 1 else "(prefork)",
             self.app.conf.task_time_limit, self.max_tasks_per_child, "on" if self.scheduler else "off",

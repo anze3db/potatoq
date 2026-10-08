@@ -387,7 +387,8 @@ class RedisBroker(Broker):
             self.run("enqueue", len(batch), *self._message_args(batch))
 
     def enqueue_periodic(self, name: str, fire_at: float, message: Message) -> bool:
-        return bool(self.run("periodic", name, repr(fire_at), 7 * 86400 * 1000, *self._message_args([message])))
+        # A claim only needs to outlive the scheduler's catch-up window (plus clock skew).
+        return bool(self.run("periodic", name, repr(fire_at), 86400 * 1000, *self._message_args([message])))
 
     def consumer(self, queues: list[str], worker_id: str, pid: int | None = None) -> RedisConsumer:
         return RedisConsumer(self, queues, worker_id, pid)

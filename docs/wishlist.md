@@ -97,14 +97,14 @@ Behaviour that's accepted for compatibility but not implemented yet.
   be needed; WSL works today.
 - [ ] **`solar` schedules** (sunrise/sunset), from Celery.
 - [ ] **Catch up missed periodic runs.** A run due while every worker is down is skipped
-  once it's 60 s late, because the scheduler starts fresh on restart. A daily job is
-  lost if the only worker restarts around its fire time, where Celery's `beat` would
+  once it's 60 s late: a starting scheduler only looks back 60 s. A daily job is lost
+  if the only worker is down for longer around its fire time, where Celery's `beat` would
   send it once on restart. On RabbitMQ, leader failover (about 1 s, or about 60 s when a
   host is lost) also skips runs due in that window, and can send one twice.
   Plan: on start and on each tick, send the latest fire time if the next one isn't due
   yet. The broker already claims each fire time once, so this is safe to repeat. That
-  needs claim records kept for at least one schedule interval (Redis keys expire after
-  7 days today, so monthly jobs would re-run), and RabbitMQ's record of sent runs moved
+  needs claim records kept for at least one schedule interval (Redis claims expire after
+  a day today, so weekly jobs would re-run), and RabbitMQ's record of sent runs moved
   from the leader's memory into the result backend. Also set a shorter heartbeat
   (about 10 s) on the RabbitMQ leader connection to cut host-loss failover.
 
@@ -122,12 +122,19 @@ What people get from Flower and friends today.
   plus a stack-dump signal for stuck workers.
 - [ ] **OpenTelemetry**: carry trace context from `delay()` into the task, with spans
   for enqueue and execution.
+- [ ] **APM integrations** (New Relic, Datadog): their agents instrument Celery tasks as
+  background transactions, but not potatoq's. Until then, wrap tasks with
+  `task_prerun`/`task_postrun` signals.
+- [ ] **`sd_notify` readiness** for systemd `Type=notify` units, so rolling restarts can
+  wait for the new worker instead of sleeping.
 - [ ] **Sentry**: Sentry's SDK instruments Celery automatically, but not potatoq. Build
   an integration on top of potatoq's signals.
 - [ ] **Structured logging**: an optional JSON log format for the worker.
 
 ## Ecosystem
 
+- [ ] **A default task base class from settings** (`task_cls`), for Django projects
+  without a `celery.py`. Today it's `Potatoq(task_cls=...)` or `@shared_task(base=...)`.
 - [ ] **Editable periodic tasks**, like django-celery-beat: schedules stored in the
   database and changeable at runtime without a deploy.
 - [ ] **Django admin** pages for dead letters, results and schedules.

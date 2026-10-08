@@ -430,3 +430,21 @@ def test_settle_refuses_unknown_actions(memory_app, add):
     delivery = consumer.fetch(timeout=0)
     with pytest.raises(ValueError, match="Unknown outcome bogus"):
         executor.settle(memory_app, consumer, delivery, executor.Outcome("bogus", states.SUCCESS))
+
+
+def test_log_done_says_what_happened_and_how_long_the_attempt_ran(caplog):
+    message = Message(task="t.x", id="m1")
+    caplog.set_level(logging.INFO, logger="potatoq")
+    for state, action in [
+        (executor.COMPLETE, states.SUCCESS),
+        (executor.RETRY, states.RETRY),
+        (executor.COMPLETE, "WEIRD"),
+    ]:
+        outcome = executor.Outcome(state, action)
+        outcome.runtime = 0.0084
+        executor.log_done(message, outcome)
+    assert [(r.levelno, r.getMessage()) for r in caplog.records] == [
+        (logging.INFO, "Task t.x[m1] succeeded (ran 0.008s)"),
+        (logging.INFO, "Task t.x[m1] will be retried (ran 0.008s)"),
+        (logging.WARNING, "Task t.x[m1] weird (ran 0.008s)"),
+    ]

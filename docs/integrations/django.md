@@ -10,7 +10,8 @@ INSTALLED_APPS = [
 That's the whole setup:
 
 - **No `celery.py`.** `@shared_task` works, and `tasks.py` in every installed app is
-  discovered automatically.
+  discovered automatically. Workers also import your URLconf at startup, as Celery's
+  do, so tasks defined in views are registered too.
 - **Your database is the broker** (Postgres or SQLite) unless you configure another
   one. Tasks are written inside your transactions.
 - **`.delay()` in `atomic()` is sent on commit** ([details](../guide/transactions.md)).
@@ -125,3 +126,28 @@ app.autodiscover_tasks()
 `TestCase` never commits, so tasks enqueued inside it are never sent. Either set
 `POTATOQ = {"task_always_eager": True}` in test settings, or use `TransactionTestCase`
 together with [`drain`](../guide/testing.md).
+
+When the broker is your database, it follows Django's test runner to the test database
+(`test_<name>`), so tests never enqueue into the database a development worker is
+reading. With SQLite's in-memory test database there is no file to share, so tasks stay
+in the test process (`memory://`) until you `drain` them.
+
+## SQLite as database and broker
+
+With SQLite, the web process, Django and the worker all write to one file. Django opens
+its transactions as `DEFERRED` by default, and a deferred transaction that reads before
+it writes can't wait for the lock: it fails at once with `database is locked`. Make
+Django take the write lock up front and wait for it (Django 5.1+):
+
+```python title="settings.py"
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": BASE_DIR / "db.sqlite3",
+        "OPTIONS": {"transaction_mode": "IMMEDIATE", "timeout": 20},
+    }
+}
+```
+
+potatoq's own connections already do this, and switch the file to WAL mode, which lets
+readers and the writer work at the same time.

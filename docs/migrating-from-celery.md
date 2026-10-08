@@ -61,7 +61,7 @@ existing classic queue. Pick new queue names rather than reusing Celery's.
 | Process recycling | never | every 1000 tasks | `worker_max_tasks_per_child = None` to disable. |
 | Concurrency | host CPU count | CPUs available to the container | Set `-c` explicitly if you relied on the old value. |
 | `beat` | separate process | runs in every worker, deduplicated | Stop running `celery beat`. `potatoq beat` exists if you prefer a dedicated process. |
-| Periodic runs | queue up while workers are down; `beat` sends a missed run once when it restarts (if its schedule file survived) | expire when the next run is due; runs missed by more than 60 s because no worker was up are skipped, even after a restart | Set `options={"expires": None}` on an entry to keep queued runs. Run at least two workers and restart them one at a time so no run is missed. |
+| Periodic runs | queue up while workers are down; `beat` sends a missed run once when it restarts (if its schedule file survived) | expire when the next run is due; a starting worker sends runs due in the last 60 s, older ones missed while no worker was up are skipped | Set `options={"expires": None}` on an entry to keep queued runs. Run at least two workers and restart them one at a time so no run is missed. |
 | Crontab with both `day_of_month` and `day_of_week` | both must match | either matches (standard cron) | |
 | Naive `eta` datetimes | treated as UTC/local | rejected | Pass aware datetimes or use `countdown`. |
 | Root logger | hijacked | left alone | |
@@ -82,3 +82,28 @@ The full list of gaps and planned features is in the [wishlist](wishlist.md).
 * `celery multi`, bootsteps, custom remote-control commands, events and Flower.
   `potatoq status` and `potatoq inspect` read worker heartbeats instead.
 * Redis Cluster, `solar` schedules, `chunks` (implemented via `starmap`, lightly tested).
+
+## Coming from Dramatiq
+
+The same steps apply: new queues, then drain the old ones. The API differs more:
+
+| Dramatiq | potatoq |
+|---|---|
+| `@dramatiq.actor` | `@shared_task` (or `@app.task`) |
+| `actor.send(*args, **kwargs)` | `task.delay(*args, **kwargs)` |
+| `actor.send_with_options(args=..., delay=60_000)` | `task.apply_async(args, countdown=60)`: seconds, not milliseconds |
+| `time_limit=` in milliseconds, default 10 min | `time_limit=` in seconds, default 30 min |
+| `python manage.py rundramatiq --processes 1 --threads 2` | `python manage.py potatoq worker -c 1 -t 2` |
+| `DRAMATIQ_AUTODISCOVER_MODULES` | `tasks.py` in every app, plus whatever your URLconf imports |
+| Results middleware | results are stored on database brokers by default; set `task_ignore_result = True` if nothing reads them |
+| `DramatiqTestCase`, `broker.join()` | `TransactionTestCase` and [`drain`](guide/testing.md) |
+
+!!! warning "Retries are opt-in"
+    Dramatiq's retry middleware retries **every** exception, up to 20 times with
+    backoff. potatoq, like Celery, only retries what you ask for. A failing task goes to
+    the [dead-letter store](guide/retries-and-failures.md#dead-letters) instead. To keep
+    Dramatiq's behaviour, add `autoretry_for=(Exception,), max_retries=...` to the tasks
+    that relied on it.
+
+After removing `django_dramatiq` from `INSTALLED_APPS`, drop its leftover table:
+`DROP TABLE django_dramatiq_task;` and `DELETE FROM django_migrations WHERE app = 'django_dramatiq';`.

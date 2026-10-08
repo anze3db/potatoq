@@ -199,6 +199,13 @@ def test_banner_warns_without_result_backend_on_foreign_settling_brokers(app, su
     assert "Registered tasks: cov.boom, cov.errback" in text
 
 
+def test_banner_says_when_results_are_off_by_default(app, sup, caplog):
+    app.conf.task_ignore_result = True
+    with caplog.at_level(logging.INFO, logger="potatoq.worker"):
+        sup._banner()
+    assert "results=off by default (task_ignore_result; " in caplog.text
+
+
 def test_banner_without_tasks(sup, caplog):
     sup.app.tasks.clear()
     with caplog.at_level(logging.INFO, logger="potatoq.worker"):

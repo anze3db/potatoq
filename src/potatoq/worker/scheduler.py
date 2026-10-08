@@ -63,7 +63,10 @@ class Scheduler:
     def __init__(self, app: Potatoq):
         self.app = app
         self.entries = load_entries(app)
-        self.last_check = datetime.now(UTC)
+        # Look back on start, so a run due while the workers restarted is still sent (if
+        # it's less than max_catch_up late). Claims make sure it's sent only once.
+        lookback = self.max_catch_up if app.broker.durable_periodic_claims else 0.0
+        self.last_check = datetime.fromtimestamp(time.time() - lookback, UTC)
         self.checkpoints: dict[str, datetime] = {}
 
     def __bool__(self) -> bool:

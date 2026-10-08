@@ -43,7 +43,7 @@ class Retry(TaskError):
 
     def humanize(self) -> str:
         if isinstance(self.when, (int, float)):
-            return f"in {self.when}s"
+            return f"in {round(self.when, 2):g}s"
         return f"at {self.when}"
 
     def __str__(self) -> str:

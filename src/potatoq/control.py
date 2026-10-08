@@ -37,8 +37,7 @@ class Inspect:
         return {w["id"]: w for w in self._workers()} or None
 
     def registered(self) -> dict[str, Any] | None:
-        names = sorted(n for n in self.app.tasks if not n.startswith("potatoq."))
-        return {w["id"]: names for w in self._workers()} or None
+        return {w["id"]: w.get("registered", []) for w in self._workers()} or None
 
     def scheduled(self) -> dict[str, Any] | None:
         return {w["id"]: [] for w in self._workers()} or None

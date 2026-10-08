@@ -99,3 +99,14 @@ def test_seconds_until_next(memory_app):
     assert scheduler
     assert scheduler.seconds_until_next(START) == 10.0  # 00:00:30 -> 00:00:40
     assert scheduler.seconds_until_next(START + timedelta(seconds=5)) == 5.0
+
+
+def test_scheduler_looks_back_on_start_unless_claims_live_in_memory(memory_app, monkeypatch):
+    """A run due while the workers restarted is still sent; the broker's claim keeps it
+    to one send. RabbitMQ's leader forgets claims on restart, so it doesn't look back."""
+    import time
+
+    lag = time.time() - Scheduler(memory_app).last_check.timestamp()
+    assert 59 < lag < 65
+    monkeypatch.setattr(memory_app.broker, "durable_periodic_claims", False)
+    assert time.time() - Scheduler(memory_app).last_check.timestamp() < 5

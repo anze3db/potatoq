@@ -57,6 +57,15 @@ def set_body_guard(guard: Any) -> None:
 
 COMPLETE = "complete"  # ack (task succeeded or failed terminally)
 RETRY = "retry"  # replace with ``retry_message``
+
+_DONE = {
+    states.SUCCESS: "succeeded",
+    states.FAILURE: "failed",
+    states.RETRY: "will be retried",
+    states.IGNORED: "was ignored",
+    states.REJECTED: "was rejected",
+    states.REVOKED: "was revoked",
+}
 REQUEUE = "requeue"  # give back unchanged
 DEAD_LETTER = "dead_letter"  # park for humans
 
@@ -212,6 +221,13 @@ def _fail_signature(
             app.store_result(msg.id, states.FAILURE, serialization.exception_to_dict(exc), task_name=msg.task)
         followups += _failure_followups(app, msg, exc, seen)
     return followups
+
+
+def log_done(message: Message, outcome: Outcome) -> None:
+    """One line per finished attempt: ``Task name[id] succeeded (ran 0.012s)``."""
+    level = logging.INFO if outcome.state in (states.SUCCESS, states.RETRY, states.IGNORED) else logging.WARNING
+    done = _DONE.get(outcome.state, outcome.state.lower())
+    logger.log(level, "Task %s[%s] %s (ran %.3fs)", message.task, message.id, done, outcome.runtime)
 
 
 def execute(

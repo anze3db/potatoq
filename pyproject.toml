@@ -91,8 +91,9 @@ ignore = ["E501", "RUF012", "B904"]
 
 [tool.coverage.run]
 source_pkgs = ["potatoq"]
-# Follow the worker's forked children, subprocesses (CLI, Django) and os._exit.
-patch = ["subprocess", "_exit", "fork"]
+# Follow the worker's forked children, subprocesses (CLI, Django), os._exit and the
+# macOS re-exec of the worker.
+patch = ["subprocess", "_exit", "fork", "execv"]
 parallel = true
 sigterm = true
 

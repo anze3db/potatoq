@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import signal
+import socket
 import sys
 import textwrap
 import types
@@ -215,14 +216,14 @@ def fake_supervisor(monkeypatch):
 
 def test_worker_options_reach_the_supervisor_and_config(app, fake_supervisor, tmp_path):
     pidfile = tmp_path / "worker.pid"
-    argv = ["worker", "-c", "3", "-Q", "a,b", "-n", "w1", "-l", "debug", "--max-tasks-per-child", "50"]
+    argv = ["worker", "-c", "3", "-Q", "a,b", "-n", "w1@%h", "-l", "debug", "--max-tasks-per-child", "50"]
     argv += ["--time-limit", "60", "--soft-time-limit", "50", "--pidfile", str(pidfile), "--no-scheduler"]
     assert run(app, *argv) == 0
     assert (app.conf.task_time_limit, app.conf.task_soft_time_limit) == (60.0, 50.0)
     assert pidfile.read_text() == str(__import__("os").getpid())
     assert fake_supervisor["concurrency"] == 3
     assert fake_supervisor["queues"] == "a,b"
-    assert fake_supervisor["hostname"] == "w1"
+    assert fake_supervisor["hostname"] == f"w1@{socket.gethostname()}"
     assert fake_supervisor["max_tasks_per_child"] == 50
     assert fake_supervisor["scheduler"] is False
 
@@ -341,24 +342,24 @@ def test_status(app, capsys):
     out = capsys.readouterr().out
     assert out.startswith("w1@host:1: queues=a,b concurrency=4 running=1 heartbeat=0s ago")
 
+    app.broker.heartbeat("w1@host:1", {"hostname": "w1@host", "queues": ["a"], "concurrency": 2, "threads": 4})
+    assert run(app, "status") == 0
+    assert "concurrency=8 (2 processes x 4 threads) running=0" in capsys.readouterr().out
+
     assert run(app, "status", "--json") == 0
     assert [w["id"] for w in json.loads(capsys.readouterr().out)] == ["w1@host:1"]
 
 
 def test_inspect(app, capsys):
-    @app.task(name="cli.registered")
-    def registered():
-        pass
-
     assert run(app, "inspect", "ping") == 1
     assert capsys.readouterr().out == "Error: No nodes replied.\n"
 
-    app.broker.heartbeat("w1@host:1", {"hostname": "w1@host", "queues": ["default"]})
+    app.broker.heartbeat("w1@host:1", {"hostname": "w1@host", "queues": ["default"], "registered": ["cli.x"]})
     app.broker.heartbeat("w2@host:2", {"hostname": "w2@host", "queues": ["other"]})
     assert run(app, "inspect", "active_queues", "-d", "w2@host") == 0
     assert json.loads(capsys.readouterr().out) == {"w2@host:2": [{"name": "other"}]}
     assert run(app, "inspect", "registered") == 0
-    assert json.loads(capsys.readouterr().out)["w1@host:1"] == ["cli.registered"]
+    assert json.loads(capsys.readouterr().out)["w1@host:1"] == ["cli.x"]
 
 
 # --- queues / purge / call / result / revoke ----------------------------------------
@@ -479,7 +480,9 @@ def test_dead_letter_without_reason_or_time(app, monkeypatch, capsys):
 def test_migrate_sets_up_broker_and_separate_result_backend(app, tmp_path, capsys):
     app.conf.result_backend = f"sqlite:///{tmp_path}/results.db"
     assert run(app, "migrate") == 0
-    assert capsys.readouterr().out == "Schema is up to date\n"
+    assert capsys.readouterr().out == (
+        f"Broker set up: {app.broker.url}\nResult backend set up: sqlite:///{tmp_path}/results.db\n"
+    )
     assert isinstance(app.backend, SQLiteBroker)
     assert (tmp_path / "results.db").exists()
 
@@ -508,3 +511,32 @@ def test_worker_refuses_to_start_on_windows(monkeypatch):
     app = Potatoq("win", broker="memory://", set_as_current=False)
     with pytest.raises(SystemExit, match="Windows isn't supported"):
         cli.main(["-A", app, "worker"])
+
+
+# --- macOS fork safety ----------------------------------------------------------
+
+
+def test_worker_reexecs_on_macos_with_fork_safety_disabled(monkeypatch):
+    calls = []
+    monkeypatch.setattr(os, "execv", lambda path, argv: calls.append((path, argv)))
+    monkeypatch.delenv("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", raising=False)
+    monkeypatch.setattr(sys, "orig_argv", [sys.executable, "-m", "potatoq.cli", "worker", "-c", "2"])
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    cli._macos_fork_safety()
+    assert calls == []
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    cli._macos_fork_safety()
+    assert calls == [(sys.executable, [sys.executable, "-m", "potatoq.cli", "worker", "-c", "2"])]
+    assert os.environ["OBJC_DISABLE_INITIALIZE_FORK_SAFETY"] == "YES"
+
+    cli._macos_fork_safety()  # after the restart: already set, carry on
+    assert len(calls) == 1
+
+
+def test_hostname_placeholders_like_celery(monkeypatch):
+    monkeypatch.setattr(cli.socket, "gethostname", lambda: "web-1.example.com")
+    assert cli.expand_hostname("w1@%h") == "w1@web-1.example.com"
+    assert cli.expand_hostname("%n-worker@%d") == "web-1-worker@example.com"
+    assert cli.expand_hostname("100%%@%n") == "100%@web-1"

@@ -7,6 +7,7 @@ import importlib
 import json
 import logging
 import os
+import socket
 import sys
 import time
 from typing import Any
@@ -182,12 +183,38 @@ def main(argv: list[Any] | None = None) -> int:
     return int(handler(app, args) or 0)
 
 
+def _macos_fork_safety() -> None:
+    """Restart once with ``OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES`` on macOS.
+
+    Once a process has started a thread (logfire, Sentry, New Relic and many other SDKs
+    do at import), macOS kills its forked children the first time they touch certain
+    system frameworks, e.g. ``socket.getfqdn()`` in Django's ``send_mail``. The variable
+    only takes effect at process start, hence the re-exec (same PID, same arguments)."""
+    if sys.platform != "darwin" or os.environ.get("OBJC_DISABLE_INITIALIZE_FORK_SAFETY"):
+        return
+    os.environ["OBJC_DISABLE_INITIALIZE_FORK_SAFETY"] = "YES"
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.execv(sys.executable, [sys.executable, *sys.orig_argv[1:]])
+
+
+def expand_hostname(name: str) -> str:
+    """Celery's ``-n`` placeholders: ``%h`` (host.domain), ``%n`` (host), ``%d`` (domain)."""
+    full = socket.gethostname()
+    host, _, domain = full.partition(".")
+    return name.replace("%%", "\0").replace("%h", full).replace("%n", host).replace("%d", domain).replace("\0", "%")
+
+
 def cmd_worker(app: Potatoq, args: argparse.Namespace) -> int:
     if sys.platform == "win32":
         raise SystemExit(
             "potatoq workers need fork() and POSIX signals, so Windows isn't supported. "
             "Run the worker under WSL or in a Linux container."
         )
+    if (args.pool or "prefork").lower() != "solo":
+        _macos_fork_safety()
+    if args.hostname:
+        args.hostname = expand_hostname(args.hostname)
     from .worker.supervisor import Supervisor
 
     if args.time_limit:
@@ -228,7 +255,6 @@ def cmd_worker(app: Potatoq, args: argparse.Namespace) -> int:
 def run_solo(app: Potatoq, args: argparse.Namespace) -> int:
     """Run tasks in this process, one at a time (handy for debugging with pdb)."""
     import signal
-    import socket
 
     from .log import setup_logging
     from .worker import executor
@@ -261,13 +287,7 @@ def run_solo(app: Potatoq, args: argparse.Namespace) -> int:
             continue
         outcome = executor.execute(app, delivery.message, delivery_count=delivery.delivery_count, hostname=hostname)
         executor.settle(app, consumer, delivery, outcome)
-        logger.info(
-            "Task %s[%s] %s in %.3fs",
-            delivery.message.task,
-            delivery.message.id,
-            outcome.state.lower(),
-            outcome.runtime,
-        )
+        executor.log_done(delivery.message, outcome)
     app.broker.unregister(node_id)
     return 0
 
@@ -307,8 +327,11 @@ def cmd_status(app: Potatoq, args: argparse.Namespace) -> int:
     now = time.time()
     for w in workers:
         age = now - float(w.get("heartbeat", now))
+        processes, threads = w.get("concurrency") or 1, w.get("threads") or 1
+        concurrency = f"{processes * threads} ({processes} processes x {threads} threads)" if threads > 1 else processes
         print(
-            f"{w['id']}: queues={','.join(w.get('queues', []))} concurrency={w.get('concurrency')} running={len(w.get('running', []))} heartbeat={age:.0f}s ago"
+            f"{w['id']}: queues={','.join(w.get('queues', []))} concurrency={concurrency} "
+            f"running={len(w.get('running', []))} heartbeat={age:.0f}s ago"
         )
     return 0
 
@@ -395,10 +418,13 @@ def cmd_inspect(app: Potatoq, args: argparse.Namespace) -> int:
 
 
 def cmd_migrate(app: Potatoq, args: argparse.Namespace) -> int:
+    from .worker.supervisor import _redact
+
     app.broker.setup()
+    print(f"Broker set up: {_redact(app.broker.url)}")
     if app.backend is not None and app.backend is not app.broker:
         app.backend.setup()
-    print("Schema is up to date")
+        print(f"Result backend set up: {_redact(app.backend.url)}")
     return 0
 
 

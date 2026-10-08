@@ -147,3 +147,60 @@ def test_django_objects_are_rejected_with_a_helpful_message(django_env):
     handle.delay(gettext_lazy("Hello"))  # lazy strings are fine: sent as plain text
     handle.delay(instance.pk)  # what you should pass instead
     assert app.broker.queue_sizes() == {"default": 2}
+
+
+def test_broker_follows_the_test_database(django_env, tmp_path):
+    """Django's test runner renames the database after potatoq was configured; tasks
+    must go to the test database, not the real one a dev worker may be consuming."""
+    from django.db import connections
+    from djangoproj.shop.tasks import send_receipt
+
+    app = django_env
+    settings_dict = connections.databases["default"]
+    real = settings_dict["NAME"]
+    try:
+        settings_dict["NAME"] = str(tmp_path / "test_db.sqlite3")
+        send_receipt.delay(1)
+        assert app.broker.url == f"sqlite:///{tmp_path}/test_db.sqlite3"
+        assert [r[0] for r in jobs(app)] == ["djangoproj.shop.tasks.send_receipt"]
+
+        settings_dict["NAME"] = "file:memorydb_default?mode=memory&cache=shared"
+        assert app.broker.url == "memory://"
+        assert app.backend is app.broker
+    finally:
+        settings_dict["NAME"] = real
+    assert app.broker.url == f"sqlite:///{real}"
+
+
+def test_worker_imports_the_urlconf_so_tasks_in_views_are_registered(django_env, monkeypatch, caplog):
+    from django.conf import settings
+
+    from potatoq import signals
+
+    app = django_env
+    name = "djangoproj.shop.views.refresh_preview"
+    monkeypatch.setattr(settings, "ROOT_URLCONF", "djangoproj.shop.views", raising=False)  # as urls.py would
+    signals.worker_init.send(sender=None)
+    assert name in app.tasks
+
+    monkeypatch.setattr(settings, "ROOT_URLCONF", "djangoproj.missing_urls")
+    signals.worker_init.send(sender=None)
+    assert "Could not import ROOT_URLCONF 'djangoproj.missing_urls'" in caplog.text
+
+    monkeypatch.setattr(settings, "ROOT_URLCONF", None)
+    signals.worker_init.send(sender=None)  # nothing to import
+
+
+def test_eager_task_inside_atomic_keeps_the_callers_connection(django_env):
+    from django.db import connection, transaction
+    from djangoproj.shop.tasks import send_receipt
+
+    app = django_env
+    app.conf.task_always_eager = True
+    try:
+        with transaction.atomic():
+            assert send_receipt.delay(1).get()["order"] == 1
+            with connection.cursor() as cur:  # still open: the task ran in our transaction
+                cur.execute("SELECT 1")
+    finally:
+        app.conf.task_always_eager = False

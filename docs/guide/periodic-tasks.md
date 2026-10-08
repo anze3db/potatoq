@@ -44,12 +44,14 @@ on workers that shouldn't schedule, or `potatoq beat` for a dedicated process.
 
 ## Missed runs
 
-- **Runs are only sent while a worker is up.** A run that's due while every worker is
-  down is skipped once it is more than 60 s late, and the scheduler keeps no state across
-  restarts. For example, with a single worker restarting from 11:55 to 12:05, a daily
-  12:00 job doesn't run that day. Run two or more workers and restart them one at a time,
-  so one is always scheduling. Catching up after downtime is on the
-  [wishlist](../wishlist.md#known-gaps).
+- **Runs are only sent while a worker is up.** A starting worker sends runs that fell due
+  in the last 60 s, so a quick restart doesn't lose one (the broker's claim still sends
+  it only once). A run that's due while every worker is down for longer is skipped. For
+  example, with a single worker down from 11:55 to 12:05, a daily 12:00 job doesn't run
+  that day. Run two or more workers and restart them one at a time, so one is always
+  scheduling. Catching up after longer downtime is on the
+  [wishlist](../wishlist.md#known-gaps). On RabbitMQ, where only the leader's memory
+  knows what was sent, a starting worker doesn't look back.
 - Each run expires when the next one is due, so a stuck queue doesn't pile up copies.
   Set `"options": {"expires": None}` to keep them.
 - A run that couldn't be enqueued because of a broker hiccup is retried on the next tick,

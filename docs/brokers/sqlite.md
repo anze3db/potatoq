@@ -27,6 +27,13 @@ app.conf.broker_transport_options = {
 With the default `synchronous=NORMAL`, nothing is lost when a process crashes. Only an
 OS crash or power loss can drop the last few commits.
 
+## As your Django database
+
+When the broker is Django's SQLite database (the default with
+`potatoq.contrib.django`), set `"OPTIONS": {"transaction_mode": "IMMEDIATE", "timeout": 20}`
+on the database, or your web requests can fail with `database is locked` while workers
+write ([details](../integrations/django.md#sqlite-as-database-and-broker)).
+
 ## Limits
 
 - **One machine**: all workers must use the same local filesystem. WAL doesn't work

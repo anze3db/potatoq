@@ -9,6 +9,10 @@ import pytest
 
 from potatoq import Potatoq
 
+# Workers started in-process (cmd_worker) must not re-exec the test runner on macOS
+# (see potatoq.cli._macos_fork_safety); worker subprocesses inherit this too.
+os.environ.setdefault("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
+
 POSTGRES_URL = os.environ.get("POTATOQ_TEST_POSTGRES", "postgresql://localhost/potatoq_test")
 REDIS_URL = os.environ.get("POTATOQ_TEST_REDIS", "redis://localhost:6379/15")
 RABBITMQ_URL = os.environ.get("POTATOQ_TEST_RABBITMQ", "amqp://guest:guest@localhost:5672//")
