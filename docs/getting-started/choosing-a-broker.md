@@ -11,7 +11,7 @@ based on what you already run.
 | Transactional enqueue | :lucide-check: | — (on commit) | — (on commit) | :lucide-check: |
 | Results | built in, free | opt-in | needs a `result_backend` | built in, free |
 | Wake-up | `LISTEN/NOTIFY` | `BZPOPMIN` | push (consume) | `data_version` |
-| Throughput (local, 4 procs) | ~7k tasks/s | ~11k tasks/s | ~6k tasks/s | ~5k tasks/s |
+| Throughput (local, 4 procs) | ~7.5k tasks/s | ~12k tasks/s | ~7k tasks/s | ~6k tasks/s |
 
 ## Recommendations
 

@@ -37,7 +37,7 @@ def reset(kind: str, url: str) -> None:
             Path(f"{HERE}/bench.db{suffix}").unlink(missing_ok=True)
     elif kind == "redis":
         client = redis.Redis.from_url(url)
-        keys = [*client.scan_iter("bench*", count=1000)]
+        keys = [*client.scan_iter("potatoq-bench*", count=1000)]
         if keys:
             client.delete(*keys)
     elif kind == "postgres":
@@ -60,7 +60,7 @@ def reset(kind: str, url: str) -> None:
 
 def run(lib: str, kind: str, url: str) -> tuple[float, float]:
     reset(kind, url)
-    counter.delete("bench:count")
+    counter.delete("potatoq-bench:count")
     env = {**os.environ, "BENCH_BROKER": url, "PYTHONPATH": str(HERE)}
     if lib == "celery":
         # Celery 5.6's prefork pool fails on macOS + Python 3.13 without this
@@ -93,13 +93,13 @@ def run(lib: str, kind: str, url: str) -> tuple[float, float]:
     worker = subprocess.Popen(cmd, env=env, cwd=HERE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         deadline = time.time() + 300
-        while int(counter.get("bench:count") or 0) < 1 and time.time() < deadline:
+        while int(counter.get("potatoq-bench:count") or 0) < 1 and time.time() < deadline:
             time.sleep(0.001)
         first = time.perf_counter()
-        while int(counter.get("bench:count") or 0) < N and time.time() < deadline:
+        while int(counter.get("potatoq-bench:count") or 0) < N and time.time() < deadline:
             time.sleep(0.005)
         elapsed = time.perf_counter() - first
-        if int(counter.get("bench:count") or 0) < N:
+        if int(counter.get("potatoq-bench:count") or 0) < N:
             raise RuntimeError(f"{lib}/{kind}: worker didn't finish within 300s")
     finally:
         worker.terminate()
@@ -110,7 +110,7 @@ def run(lib: str, kind: str, url: str) -> tuple[float, float]:
 def cleanup() -> None:
     for kind, url in (("redis", "redis://localhost:6379/13"), ("rabbitmq", None), ("sqlite", None)):
         reset(kind, url)
-    counter.delete("bench:count")
+    counter.delete("potatoq-bench:count")
 
 
 def main() -> None:

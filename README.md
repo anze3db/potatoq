@@ -220,17 +220,17 @@ the serializer so eager tests catch what production would.
 ## Performance
 
 `benchmarks/throughput.py`: 5000 no-op tasks, 4 worker processes, all brokers on
-localhost (Apple M-series). Run it yourself with
+localhost (Apple M3 Max, Python 3.13, median of 3 runs). Run it yourself with
 `uv run --with 'celery[redis]' python benchmarks/throughput.py`.
 
 | Library | Broker | Enqueue (tasks/s) | Process (tasks/s) |
 |---|---|---:|---:|
-| **Potatoq** | Redis | 9,400 | **11,400** |
-| Celery 5.6 | Redis | 4,300 | 2,700 |
-| **Potatoq** | RabbitMQ | 3,400 ¹ | 6,300 |
-| Celery 5.6 | RabbitMQ | 7,800 ¹ | 8,200 ² |
-| **Potatoq** | Postgres | 5,600 | 7,000 |
-| **Potatoq** | SQLite | 14,100 | 5,700 |
+| **Potatoq** | Redis | 10,200 | **11,900** |
+| Celery 5.6 | Redis | 5,400 | 2,700 |
+| **Potatoq** | RabbitMQ | 2,700 ¹ | 6,800 |
+| Celery 5.6 | RabbitMQ | 8,300 ¹ | 8,000 ² |
+| **Potatoq** | Postgres | 5,500 | 7,500 |
+| **Potatoq** | SQLite | 14,700 | 5,700 |
 
 ¹ Potatoq waits for RabbitMQ publisher confirms on every publish, so an enqueued task
 is replicated before `delay()` returns. Celery doesn't wait, which is how its publishes
@@ -242,6 +242,12 @@ Getting Celery to run at all for this comparison took two workarounds:
 `FORKED_BY_MULTIPROCESSING=1`, because the prefork pool fails on macOS with Python 3.13,
 and disabling remote control, because RabbitMQ 4.3 rejects Celery's transient pidbox
 queues. Potatoq needed none. Redis, Postgres and SQLite numbers vary by about ±10% between runs. RabbitMQ numbers swing up to 2× with machine load, because every publish waits for the broker to confirm it.
+
+**CPU-bound tasks** (`benchmarks/cpu.py`, a pure-Python loop, speedup over one worker
+process): 4 processes give 4.0× on Python 3.14. 4 threads in one process give 1.0×
+with the GIL, and 2.8× on free-threaded 3.14t (3.3× on 3.15t rc3) in about half the
+memory. That's what a bare `ThreadPoolExecutor` gets too. Details in the
+[workers guide](docs/guide/workers.md#free-threaded-python).
 
 There is no Rust in the hot path, and that's deliberate. The research
 ([docs/design/internals.md#rust](docs/design/internals.md#rust)) found that per-task overhead is

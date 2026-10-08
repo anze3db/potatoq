@@ -14,7 +14,7 @@ configured.
 - **Millisecond wake-ups** without polling the table: idle workers watch
   `PRAGMA data_version`, a ~2 µs check.
 - **Transactional enqueue and free results**, as with Postgres.
-- About 14k enqueues/s and 5k processed tasks/s on a laptop with 4 worker processes.
+- About 15k enqueues/s and 6k processed tasks/s on a laptop with 4 worker processes.
 
 ## Options
 

@@ -111,9 +111,9 @@ $ potatoq -A proj worker
 
 | Broker | potatoq | Celery 5.6 |
 |---|---:|---:|
-| Redis | **11,400 tasks/s** | 2,700 tasks/s |
-| Postgres | **7,000 tasks/s** | — |
-| RabbitMQ | 6,300 tasks/s ¹ | 8,200 tasks/s ¹ |
+| Redis | **11,900 tasks/s** | 2,700 tasks/s |
+| Postgres | **7,500 tasks/s** | — |
+| RabbitMQ | 6,800 tasks/s ¹ | 8,000 tasks/s ¹ |
 | SQLite | **5,700 tasks/s** | — |
 
 ¹ On RabbitMQ, Celery acks before running the task and publishes without waiting for

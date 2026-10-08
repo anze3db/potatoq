@@ -7,13 +7,13 @@ app = Celery("bench", broker=os.environ["BENCH_BROKER"])
 app.conf.task_ignore_result = True
 app.conf.broker_connection_retry_on_startup = True
 app.conf.task_default_queue = "bench_celery"
-app.conf.broker_transport_options = {"global_keyprefix": "bench:"}
+app.conf.broker_transport_options = {"global_keyprefix": "potatoq-bench:"}
 counter = redis.Redis.from_url("redis://localhost:6379/13")
 
 
 @app.task
 def noop(i):
-    counter.incr("bench:count")
+    counter.incr("potatoq-bench:count")
 
 
 if os.environ["BENCH_BROKER"].startswith("amqp"):

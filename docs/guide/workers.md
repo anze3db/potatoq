@@ -89,6 +89,24 @@ since an extension that doesn't declare free-threading support turns the GIL bac
 The test suite runs on 3.14t and 3.15t and checks that four CPU-bound tasks in one
 process each get nearly a full core.
 
+`benchmarks/cpu.py` runs a pure-Python CPU-bound task (about 40 ms) on Redis, and
+compares 4 processes with 1 process running 4 threads (Apple M3 Max, median of 2–4
+runs). Speedup is over a single worker process on the same interpreter:
+
+| Python | 4 processes (`-c 4`) | 4 threads (`-c 1 -t 4`) |
+|---|---|---|
+| 3.14 | 4.0×, 147 MB | 1.0×, 69 MB |
+| 3.14t (free-threaded) | 3.7×, 167 MB | 2.8×, 87 MB |
+| 3.15 rc3 | 3.9×, 150 MB | 1.1×, 71 MB |
+| 3.15t rc3 (free-threaded) | 3.8×, 172 MB | 3.3×, 90 MB |
+
+With the GIL, threads don't speed up CPU-bound work at all. Without it, they get most
+of the way to processes in about half the memory (RSS of the whole worker, which
+counts pages shared after `fork()` once per process). A bare `ThreadPoolExecutor`
+running the same loop scales the same 2.8–3.3×, so the gap to processes is the
+interpreter's, not potatoq's. For CPU-bound work processes are still the fastest
+option; threads on a free-threaded build are the leaner one.
+
 ## Shutdown
 
 | Signal | Effect |
