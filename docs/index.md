@@ -11,7 +11,18 @@ hide:
 
 # potatoq
 
-<p class="pq-tagline">The Python task queue with the defaults Celery should have had. Same API, every hard production lesson already applied, and each broker used the way it was meant to be.</p>
+<p class="pq-tagline">The Python task queue with the defaults Celery should have had.</p>
+
+<div class="pq-highlights" markdown>
+
+- **🛡️ [Production defaults](#defaults-side-by-side)**
+  Acks after the task finishes, time limits, dead letters, and ETAs kept by the broker.
+- **🧵 [Free-threaded Python](guide/workers.md#free-threaded-python)**
+  Tested on 3.14t and 3.15t. Threads run CPU-bound tasks in parallel: 4 threads, 3.4× faster.
+- **🎸 [Django tasks](integrations/django-tasks.md)**
+  A backend for Django 6's `django.tasks`, or `@shared_task` with one line in `INSTALLED_APPS`. Sent on commit.
+
+</div>
 
 [Get started](getting-started/quickstart.md){ .md-button .md-button--primary }
 [Migrating from Celery](migrating-from-celery.md){ .md-button }
@@ -84,21 +95,6 @@ $ potatoq -A proj worker
 
     `@shared_task`, `delay`, `apply_async`, `chain`/`group`/`chord`, `beat_schedule`,
     signals and `CELERY_*` settings all keep working.
-
--   :lucide-cpu:{ .lg .middle } **Ready for free-threaded Python**
-
-    ---
-
-    Tested on 3.14t and 3.15t without re-enabling the GIL: `--threads` runs CPU-bound
-    tasks in parallel in one process ([numbers](guide/workers.md#free-threaded-python)).
-
--   :simple-django:{ .lg .middle } **Django tasks**
-
-    ---
-
-    A backend for Django 6's built-in [`django.tasks`](integrations/django-tasks.md).
-    Or add one entry to `INSTALLED_APPS` for `@shared_task`, no `celery.py`, with
-    enqueue on commit.
 
 </div>
 
