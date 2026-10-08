@@ -149,13 +149,17 @@ def test_django_objects_are_rejected_with_a_helpful_message(django_env):
     assert app.broker.queue_sizes() == {"default": 2}
 
 
-def test_broker_follows_the_test_database(django_env, tmp_path):
+def test_broker_follows_the_test_database(django_env, tmp_path, monkeypatch):
     """Django's test runner renames the database after potatoq was configured; tasks
     must go to the test database, not the real one a dev worker may be consuming."""
     from django.db import connections
     from djangoproj.shop.tasks import send_receipt
 
     app = django_env
+    destroyed = []
+    creation = connections["default"].creation
+    monkeypatch.setattr(creation, "destroy_test_db", lambda *a, **k: destroyed.append(app._broker))
+    monkeypatch.setattr(app._broker_follows, "_hooked", False)
     settings_dict = connections.databases["default"]
     real = settings_dict["NAME"]
     try:
@@ -163,6 +167,11 @@ def test_broker_follows_the_test_database(django_env, tmp_path):
         send_receipt.delay(1)
         assert app.broker.url == f"sqlite:///{tmp_path}/test_db.sqlite3"
         assert [r[0] for r in jobs(app)] == ["djangoproj.shop.tasks.send_receipt"]
+
+        # Before the test runner drops the test database, potatoq lets go of it
+        # (Postgres refuses to drop a database with other sessions).
+        creation.destroy_test_db(":memory:", verbosity=0)
+        assert destroyed == [None]
 
         settings_dict["NAME"] = "file:memorydb_default?mode=memory&cache=shared"
         assert app.broker.url == "memory://"
@@ -172,23 +181,32 @@ def test_broker_follows_the_test_database(django_env, tmp_path):
     assert app.broker.url == f"sqlite:///{real}"
 
 
-def test_worker_imports_the_urlconf_so_tasks_in_views_are_registered(django_env, monkeypatch, caplog):
+def test_worker_imports_the_urlconf_only_when_asked(django_env, monkeypatch, caplog):
+    import types
+
     from django.conf import settings
 
     from potatoq import signals
 
     app = django_env
+    worker = types.SimpleNamespace(app=app)
     name = "djangoproj.shop.views.refresh_preview"
     monkeypatch.setattr(settings, "ROOT_URLCONF", "djangoproj.shop.views", raising=False)  # as urls.py would
-    signals.worker_init.send(sender=None)
+    signals.worker_init.send(sender=worker)
+    assert name not in app.tasks  # by default only tasks.py modules are discovered
+
+    monkeypatch.setitem(app.conf, "worker_import_urlconf", True)
+    signals.worker_init.send(sender=None)  # not a worker: nothing to do
+    assert name not in app.tasks
+    signals.worker_init.send(sender=worker)
     assert name in app.tasks
 
     monkeypatch.setattr(settings, "ROOT_URLCONF", "djangoproj.missing_urls")
-    signals.worker_init.send(sender=None)
+    signals.worker_init.send(sender=worker)
     assert "Could not import ROOT_URLCONF 'djangoproj.missing_urls'" in caplog.text
 
     monkeypatch.setattr(settings, "ROOT_URLCONF", None)
-    signals.worker_init.send(sender=None)  # nothing to import
+    signals.worker_init.send(sender=worker)  # nothing to import
 
 
 def test_eager_task_inside_atomic_keeps_the_callers_connection(django_env):

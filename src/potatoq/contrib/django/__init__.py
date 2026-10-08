@@ -107,7 +107,7 @@ def configure_app(app: Potatoq) -> None:
         url = database_url()
         if url:
             conf.broker_url = url
-            app._broker_follows = DatabaseFollower(database_alias())
+            app._broker_follows = DatabaseFollower(database_alias(), app)
     install(app)
 
 
@@ -118,9 +118,11 @@ class DatabaseFollower:
     database) after potatoq was configured. Without this, tests would enqueue into the
     real database, where a running development worker would pick the tasks up."""
 
-    def __init__(self, alias: str) -> None:
+    def __init__(self, alias: str, app: Potatoq) -> None:
         self.alias = alias
+        self.app = weakref.ref(app)
         self.name = self._name()
+        self._hooked = False
 
     def _name(self) -> Any:
         from django.db import connections
@@ -137,7 +139,28 @@ class DatabaseFollower:
         # keep tasks in this process instead (run them with potatoq.testing.drain).
         url = database_url(self.alias) or "memory://"
         logger.info("Django switched database %r to %r; potatoq now uses %s", self.alias, name, url)
+        self._close_before_destroy()
         return url
+
+    def _close_before_destroy(self) -> None:
+        """Close potatoq's connections before the test runner drops the test database:
+        Postgres refuses to drop a database other sessions are connected to."""
+        if self._hooked:
+            return
+        from django.db import connections
+
+        creation = connections[self.alias].creation
+        destroy = creation.destroy_test_db
+
+        def destroy_test_db(*args: Any, **kwargs: Any) -> Any:
+            app = self.app()
+            if app is not None:
+                with app._lock:
+                    app._reset_connections()
+            return destroy(*args, **kwargs)
+
+        creation.destroy_test_db = destroy_test_db
+        self._hooked = True
 
 
 def install(app: Potatoq, *, bind_backends: bool = True) -> None:
@@ -203,11 +226,15 @@ def _bind_task_backends(app: Potatoq, bind_backends: bool = True) -> None:
             backend.bind(app)
 
 
-def _import_urlconf(**kwargs: Any) -> None:
-    """Register tasks defined outside ``tasks.py`` (e.g. in views), like Celery's worker,
-    whose startup system checks import the URLconf."""
+def _import_urlconf(sender: Any = None, **kwargs: Any) -> None:
+    """With ``worker_import_urlconf``, register tasks defined outside ``tasks.py`` (e.g.
+    in views) by importing the URLconf, like Celery's worker does through its startup
+    system checks. Off by default: workers shouldn't need to import the web layer."""
     from importlib import import_module
 
+    app = getattr(sender, "app", None)
+    if app is None or not app.conf.worker_import_urlconf:
+        return
     urlconf = getattr(_settings(), "ROOT_URLCONF", None)
     if urlconf:
         try:

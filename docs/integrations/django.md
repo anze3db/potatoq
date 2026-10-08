@@ -10,8 +10,7 @@ INSTALLED_APPS = [
 That's the whole setup:
 
 - **No `celery.py`.** `@shared_task` works, and `tasks.py` in every installed app is
-  discovered automatically. Workers also import your URLconf at startup, as Celery's
-  do, so tasks defined in views are registered too.
+  discovered automatically ([tasks elsewhere](#where-tasks-live)).
 - **Your database is the broker** (Postgres or SQLite) unless you configure another
   one. Tasks are written inside your transactions.
 - **`.delay()` in `atomic()` is sent on commit** ([details](../guide/transactions.md)).
@@ -87,6 +86,24 @@ Decide what the task should do if the row is gone by then (`Order.DoesNotExist`)
 Usually that's returning quietly. Lazy translation strings (`gettext_lazy`) are sent as
 plain text in the language active at `.delay()` time. To translate inside the task,
 send the language code and use `translation.override()`.
+
+## Where tasks live
+
+Workers import `tasks.py` from every installed app, and nothing else. A task defined in
+`views.py` (or any other module) works when you call `.delay()` from the web process,
+but a worker that never imported that module can't run it: the task is dead-lettered as
+unregistered (`potatoq dead list` shows it).
+
+Celery registered these by accident: its worker runs Django's system checks at startup,
+and those import your URLconf and with it every view. potatoq workers don't import the
+web layer by default. Instead, either:
+
+- **Move the task to `tasks.py`** and import it from the view (recommended), or
+- **List its module** in `imports`: `POTATOQ = {"imports": ["accounts.views"]}`
+  (`CELERY_IMPORTS` works too), or
+- **Import the URLconf** like Celery: `POTATOQ = {"worker_import_urlconf": True}`.
+
+`potatoq -A proj inspect registered` shows what the running workers registered.
 
 ## Settings
 

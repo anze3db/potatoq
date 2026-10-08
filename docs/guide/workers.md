@@ -144,7 +144,8 @@ TimeoutStopSec=35
 WantedBy=multi-user.target
 ```
 
-One unit per host is enough: there is no `multi` command to manage, and no separate
+In unit files systemd expands `%h` itself (to the home directory), so write `-n
+worker@%%h` to pass potatoq's `%h`, or leave `-n` out. One unit per host is enough: there is no `multi` command to manage, and no separate
 `beat` service, because every worker runs the scheduler. Restart workers one at a time
 when deploying to several hosts, so periodic runs aren't missed
 ([details](periodic-tasks.md#missed-runs)). Wrappers like `newrelic-admin run-program`

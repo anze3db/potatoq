@@ -57,6 +57,7 @@ DEFAULTS: dict[str, Any] = {
     "worker_prefetch_multiplier": 1,  # each idle process fetches exactly one task
     "worker_max_tasks_per_child": 1000,  # recycle processes to contain memory leaks
     "worker_max_memory_per_child": None,  # KiB (Celery compatible) or "512MB"
+    "worker_import_urlconf": False,  # Django: import ROOT_URLCONF at startup (tasks in views)
     "worker_shutdown_timeout": 25.0,  # seconds to finish running tasks on SIGTERM
     "worker_heartbeat_interval": 5.0,
     "worker_dead_after": 60.0,  # a worker silent this long is dead; its tasks are recovered

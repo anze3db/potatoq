@@ -57,6 +57,8 @@ automatically. The [design notes](../design/defaults.md) explain each default.
 | `worker_threads` | `1` | Task threads per process ([time-limit caveats](../guide/workers.md#threads)) |
 | `worker_max_tasks_per_child` | `1000` | `None` disables recycling |
 | `worker_max_memory_per_child` | `None` | `"512MB"`, or KiB as an int |
+| `worker_import_urlconf` | `False` | Django: import `ROOT_URLCONF` when a worker starts, so tasks defined in views are registered ([details](../integrations/django.md#where-tasks-live)) |
+| `imports` | `()` | Extra modules workers import at startup (`CELERY_IMPORTS`) |
 | `worker_shutdown_timeout` | `25` | Seconds running tasks get on SIGTERM |
 | `worker_heartbeat_interval` | `5` | |
 | `worker_dead_after` | `60` | A silent node's tasks are recovered after this |

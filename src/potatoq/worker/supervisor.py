@@ -190,8 +190,10 @@ class Supervisor:
         broker_url = _redact(self.app.broker.url)
         backend = self.app.backend
         results = _redact(backend.url) if backend else "disabled"
-        if backend and self.app.conf.task_ignore_result:
-            results = f"off by default (task_ignore_result; {results})"
+        ignore = self.app.conf.task_ignore_result
+        if backend and (ignore or (ignore is None and not self.app.results_enabled_by_default())):
+            # Tasks can still opt in with ignore_result=False.
+            results = f"not stored by default (backend {results})"
         logger.info(
             "potatoq %s worker %s ready: broker=%s results=%s queues=%s concurrency=%d %s "
             "time_limit=%ss max_tasks_per_child=%s scheduler=%s",

@@ -200,11 +200,17 @@ def test_banner_warns_without_result_backend_on_foreign_settling_brokers(app, su
     assert "cov.boom, cov.errback" in registered  # plus @shared_tasks other tests defined
 
 
-def test_banner_says_when_results_are_off_by_default(app, sup, caplog):
+def test_banner_says_when_results_are_off_by_default(app, sup, caplog, monkeypatch):
     app.conf.task_ignore_result = True
     with caplog.at_level(logging.INFO, logger="potatoq.worker"):
         sup._banner()
-    assert "results=off by default (task_ignore_result; " in caplog.text
+    assert "results=not stored by default (backend " in caplog.text
+    caplog.clear()
+    app.conf.task_ignore_result = None  # the default: Redis/RabbitMQ only store results when configured
+    monkeypatch.setattr(app, "results_enabled_by_default", lambda: False)
+    with caplog.at_level(logging.INFO, logger="potatoq.worker"):
+        sup._banner()
+    assert "results=not stored by default (backend " in caplog.text
 
 
 def test_banner_without_tasks(sup, caplog):

@@ -65,6 +65,7 @@ existing classic queue. Pick new queue names rather than reusing Celery's.
 | Crontab with both `day_of_month` and `day_of_week` | both must match | either matches (standard cron) | |
 | Naive `eta` datetimes | treated as UTC/local | rejected | Pass aware datetimes or use `countdown`. |
 | Root logger | hijacked | left alone | |
+| Tasks defined outside `tasks.py` (e.g. in views) | registered, because the worker's startup checks import the URLconf | only `tasks.py` is imported | Move them to `tasks.py`, or see [where tasks live](integrations/django.md#where-tasks-live). |
 
 ## 5. Not supported (yet)
 
@@ -94,7 +95,7 @@ The same steps apply: new queues, then drain the old ones. The API differs more:
 | `actor.send_with_options(args=..., delay=60_000)` | `task.apply_async(args, countdown=60)`: seconds, not milliseconds |
 | `time_limit=` in milliseconds, default 10 min | `time_limit=` in seconds, default 30 min |
 | `python manage.py rundramatiq --processes 1 --threads 2` | `python manage.py potatoq worker -c 1 -t 2` |
-| `DRAMATIQ_AUTODISCOVER_MODULES` | `tasks.py` in every app, plus whatever your URLconf imports |
+| `DRAMATIQ_AUTODISCOVER_MODULES` | `tasks.py` in every app, plus the `imports` setting |
 | Results middleware | results are stored on database brokers by default; set `task_ignore_result = True` if nothing reads them |
 | `DramatiqTestCase`, `broker.join()` | `TransactionTestCase` and [`drain`](guide/testing.md) |
 
