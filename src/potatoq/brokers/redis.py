@@ -111,6 +111,10 @@ elseif cmd == 'periodic' then
   -- name, fire_at, ttl, then one message
   local key = P .. ':periodic:' .. ARGV[3] .. ':' .. ARGV[4]
   if not redis.call('SET', key, 1, 'NX', 'PX', ARGV[5]) then return 0 end
+  local last = redis.call('HGET', P .. ':periodic-last', ARGV[3])
+  if not last or tonumber(last) < tonumber(ARGV[4]) then
+    redis.call('HSET', P .. ':periodic-last', ARGV[3], ARGV[4])
+  end
   enqueue(6, 1, now_ms())
   return 1
 
@@ -323,6 +327,7 @@ class RedisBroker(Broker):
     schemes = ("redis", "rediss", "valkey", "unix")
     supports_results = True
     transactional = False
+    connection_errors = (redis.ConnectionError, redis.TimeoutError, OSError)
 
     def __init__(self, url: str, app: Any, **options: Any):
         super().__init__(url, app, **options)
@@ -389,6 +394,9 @@ class RedisBroker(Broker):
     def enqueue_periodic(self, name: str, fire_at: float, message: Message) -> bool:
         # A claim only needs to outlive the scheduler's catch-up window (plus clock skew).
         return bool(self.run("periodic", name, repr(fire_at), 86400 * 1000, *self._message_args([message])))
+
+    def last_periodic_runs(self) -> dict[str, float]:
+        return {_s(k): float(v) for k, v in self.client.hgetall(f"{self.prefix}:periodic-last").items()}
 
     def consumer(self, queues: list[str], worker_id: str, pid: int | None = None) -> RedisConsumer:
         return RedisConsumer(self, queues, worker_id, pid)

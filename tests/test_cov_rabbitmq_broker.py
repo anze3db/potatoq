@@ -297,8 +297,18 @@ def test_undecodable_messages_are_dead_lettered(rmq, caplog):
     queue = rmq.conf.task_default_queue
     broker.setup()
     ch = broker._channel()
+    rejected = msg(rmq)
+    broker.enqueue([rejected])
+    method, _, _ = ch.basic_get(queue)
+    while method is None or method.delivery_tag is None:  # pragma: no cover - timing
+        method, _, _ = ch.basic_get(queue)
+    ch.basic_reject(method.delivery_tag, requeue=False)  # dead-lettered by RabbitMQ itself
     ch.basic_publish("", queue, b"\xff not json", pika.BasicProperties(delivery_mode=2))
-    ch.basic_publish("", queue, b'["json", "but not a task"]', pika.BasicProperties(delivery_mode=2))
+    # What Celery producers (e.g. a Go service using a Celery client) send: protocol 2.
+    celery = pika.BasicProperties(
+        delivery_mode=2, content_type="application/json", headers={"task": "scans.done", "id": "c-1"}
+    )
+    ch.basic_publish("", queue, b'[[1], {}, {"callbacks": null, "chord": null}]', celery)
     good = msg(rmq)
     broker.enqueue([good])
     consumer = broker.consumer([queue], "w")
@@ -306,13 +316,19 @@ def test_undecodable_messages_are_dead_lettered(rmq, caplog):
         with caplog.at_level(logging.ERROR, logger="potatoq.rabbitmq"):
             delivery = consumer.fetch(5)
         assert delivery.message.id == good.id
-        assert caplog.text.count("Undecodable message") == 2
+        assert caplog.text.count("Dead-lettering a message in") == 2
+        assert "(task=scans.done id=c-1): This is a Celery (protocol 2) message" in caplog.text
         consumer.complete(delivery, None, [])
     finally:
         consumer.close()
-    dead = broker.dead_letters()
-    assert sorted(e["message"]["body"] for e in dead) == ['["json", "but not a task"]', "� not json"]
-    assert {e["reason"] for e in dead} == {"rejected"}  # from RabbitMQ's x-death header
+    entries = broker.dead_letters()
+    by_rabbitmq = [e for e in entries if e["id"] == rejected.id]
+    assert by_rabbitmq[0]["reason"] == "rejected"  # from RabbitMQ's x-death header
+    dead = {e["message"]["body"]: e for e in entries if "body" in e["message"]}
+    assert set(dead) == {'[[1], {}, {"callbacks": null, "chord": null}]', "\ufffd not json"}
+    celery_entry = dead['[[1], {}, {"callbacks": null, "chord": null}]']
+    assert (celery_entry["task"], celery_entry["id"], celery_entry["queue"]) == ("scans.done", "c-1", queue)
+    assert celery_entry["reason"].startswith("This is a Celery (protocol 2) message")
     assert broker.requeue_dead("no-such-task") is False
 
 
@@ -480,3 +496,32 @@ def test_close_with_a_dead_channel_still_closes_the_connection(rmq):
         assert fetch_settled(other).message.id == m.id
     finally:
         other.close()
+
+
+def test_consumer_timeout_covers_the_longest_task_time_limit(rmq):
+    @rmq.task(name="t.long", time_limit=4 * 3600)
+    def long():
+        pass
+
+    consumer = rmq.broker.consumer([rmq.conf.task_default_queue], "w")
+    assert consumer._consume_arguments() == {"x-consumer-timeout": (4 * 3600 + 300) * 1000}
+    rmq.conf.task_time_limit = None  # no limit at all: a day
+    assert consumer._consume_arguments() == {"x-consumer-timeout": (24 * 3600 + 300) * 1000}
+
+
+def test_consumer_reconnects_when_rabbitmq_cancels_it(rmq, caplog):
+    """RabbitMQ cancels a consumer when its queue is deleted, or (4.3+) when a delivery
+    outruns the consumer timeout. The worker must reconnect, not go quiet."""
+    broker = rmq.broker
+    queue = rmq.conf.task_default_queue
+    consumer = broker.consumer([queue], "w")
+    try:
+        assert consumer.fetch(0.2) is None  # consuming
+        with caplog.at_level(logging.ERROR, logger="potatoq.rabbitmq"):
+            delete_queues(queue)
+            assert wait_for(lambda: consumer._broken)
+        assert "RabbitMQ cancelled this worker's consumer" in caplog.text
+        broker.enqueue([m := msg(rmq)])  # redeclares the queue
+        assert fetch_settled(consumer).message.id == m.id  # consuming again
+    finally:
+        consumer.close()

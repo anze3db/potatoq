@@ -12,8 +12,9 @@ Design (research in docs/backends.md):
   NServiceBus and Celery 5.5 (``potatoq.delay.L27`` ... ``L00``). Delays up to ~8.5
   years, whole-second precision, replicated.
 * **One message per idle process**: each worker child consumes with prefetch 1, so
-  no task waits behind a long one. ``x-consumer-timeout`` is set above the task time
-  limit so RabbitMQ's 30 minute default never kills a healthy long task.
+  no task waits behind a long one. ``x-consumer-timeout`` is set above the longest task
+  time limit so RabbitMQ's 30 minute default never kills a healthy long task. RabbitMQ
+  only honours it per consumer from 4.3; older servers need a policy (see the docs).
 * A dedicated I/O thread per worker process owns the connection, so heartbeats keep
   flowing while a task runs (pika is not thread-safe; everything is marshalled).
 * RabbitMQ can't store results: set ``result_backend`` (Redis/Postgres/SQLite) if you
@@ -97,6 +98,7 @@ class RabbitMQBroker(Broker):
     schemes = ("amqp", "amqps")
     supports_results = False
     transactional = False
+    connection_errors = (AMQPError, OSError)
     durable_periodic_claims = False  # the leader remembers sent runs in memory
     needs_revoke_check = True
 
@@ -426,7 +428,9 @@ class RabbitMQBroker(Broker):
             if reason is None and headers.get("x-death"):
                 reason = str(headers["x-death"][0].get("reason"))
             died = (headers.get("potatoq-died") or time.time() * 1000) / 1000
-            out.append({"id": props.message_id or message.get("id"), "queue": message.get("queue"), "task": message.get("task"),
+            out.append({"id": props.message_id or message.get("id") or headers.get("id"),
+                        "queue": message.get("queue") or method.routing_key,
+                        "task": message.get("task") or headers.get("task"),  # Celery puts these in headers
                         "reason": reason, "died_at": float(died), "message": message})  # fmt: skip
             return False
 
@@ -472,14 +476,17 @@ class RabbitMQConsumer(Consumer):
     # --- I/O thread ------------------------------------------------------------------
 
     def _ensure_started(self) -> None:
-        if self._thread is not None and self._thread.is_alive() and not self._broken:
-            return
+        if self._thread is not None:
+            if self._thread.is_alive() and not self._broken:
+                return
+            self._thread.join(timeout=2)  # it closes a broken connection on its way out
         self._broken = False
         self._inbox = queue_mod.Queue()
         self._conn = pika.BlockingConnection(self.broker.params)
         self._ch = self._conn.channel()
         self._ch.confirm_delivery()
         self._ch.basic_qos(prefetch_count=1)
+        self._ch.add_on_cancel_callback(self._on_cancelled)
         self.broker._declared = set()
         self.broker._delay_ready = False
         for name in self.queues:
@@ -492,9 +499,21 @@ class RabbitMQConsumer(Consumer):
         self._thread.start()
 
     def _consume_arguments(self) -> dict[str, Any]:
-        limit = self.broker.app.conf.task_time_limit
-        timeout_ms = int(((float(limit) if limit else 24 * 3600) + 300) * 1000)
-        return {"x-consumer-timeout": timeout_ms}
+        # Above the longest time limit of any task this worker runs: RabbitMQ (4.3+)
+        # returns a delivery to the queue once it's been unacked this long.
+        app = self.broker.app
+        limits = [app.conf.task_time_limit, *(getattr(t, "time_limit", None) for t in app._tasks.values())]
+        longest = 24 * 3600.0 if app.conf.task_time_limit is None else max(float(x) for x in limits if x)
+        return {"x-consumer-timeout": int((longest + 300) * 1000)}
+
+    def _on_cancelled(self, method_frame: Any) -> None:
+        # Server-initiated: the queue was deleted, or (4.3+) a delivery outran the
+        # consumer timeout. Reconnect rather than silently stop consuming.
+        logger.error(
+            "RabbitMQ cancelled this worker's consumer (queue deleted, or a task ran longer than the "
+            "consumer timeout); reconnecting"
+        )
+        self._broken = True
 
     def _consume(self, name: str) -> None:
         def on_message(ch: Any, method: Any, props: Any, body: bytes) -> None:
@@ -511,13 +530,17 @@ class RabbitMQConsumer(Consumer):
         self._consumer_tags[name] = tag
 
     def _io_loop(self) -> None:
+        conn = self._conn
         try:
-            while not self._closing:
-                self._conn.process_data_events(time_limit=0.2)
+            while not self._closing and not self._broken:
+                conn.process_data_events(time_limit=0.2)
         except Exception as exc:
             if not self._closing:
                 logger.warning("RabbitMQ consumer connection lost: %s", exc)
             self._broken = True
+        if self._broken and not self._closing:
+            with contextlib.suppress(Exception):
+                conn.close()
 
     def _call(self, fn: Callable[[], Any]) -> Any:
         """Run ``fn`` on the I/O thread and wait for it."""
@@ -573,11 +596,27 @@ class RabbitMQConsumer(Consumer):
             count = 1 + max(int(headers.get("x-delivery-count") or 0), int(headers.get("x-acquired-count") or 0) - 1, 0)
             try:
                 message = Message.decode(body)
-            except Exception:
-                logger.exception("Undecodable message in %s; dead-lettering it", name)
-                self._call(functools.partial(self._ch.basic_reject, method.delivery_tag, requeue=False))
+            except Exception as exc:
+                logger.error(
+                    "Dead-lettering a message in %s that potatoq can't read (task=%s id=%s): %s",
+                    name, headers.get("task"), headers.get("id") or props.message_id, exc,
+                )  # fmt: skip
+                self._call(functools.partial(self._dead_letter_raw, name, method, props, body, str(exc)))
                 continue
             return Delivery(message, delivery_count=count, handle=method.delivery_tag)
+
+    def _dead_letter_raw(self, queue: str, method: Any, props: Any, body: bytes, reason: str) -> None:
+        """Move a message we can't decode to the queue's dead letters, as it was sent."""
+        headers = dict(props.headers or {})
+        headers.update({"potatoq-reason": reason[-2000:], "potatoq-died": int(time.time() * 1000)})
+        out = pika.BasicProperties(
+            message_id=props.message_id or headers.get("id"),
+            content_type=props.content_type,
+            headers=headers,
+            delivery_mode=2,
+        )
+        self._ch.basic_publish(DLX, queue, body, out, mandatory=True)
+        self._ch.basic_ack(method.delivery_tag)
 
     def _pause_others(self, keep: str) -> None:
         for name, tag in list(self._consumer_tags.items()):

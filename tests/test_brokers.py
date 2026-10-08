@@ -172,6 +172,23 @@ def test_periodic_dedup(broker_app):
     c.close()
 
 
+def test_last_periodic_runs(broker_app):
+    from datetime import UTC, datetime
+
+    app = broker_app
+    now = time.time()
+    app.broker.enqueue_periodic("hourly", now - 7200, msg(app))
+    app.broker.enqueue_periodic("hourly", now - 3600, msg(app))
+    app.broker.enqueue_periodic("daily", now - 60, msg(app))
+    if app.broker.durable_periodic_claims:
+        assert app.control.last_periodic_runs() == {
+            "daily": datetime.fromtimestamp(now - 60, UTC),
+            "hourly": datetime.fromtimestamp(now - 3600, UTC),
+        }
+    else:  # RabbitMQ: only the leader's memory knows
+        assert app.control.last_periodic_runs() == {}
+
+
 def test_revoke_waiting_task(broker_app):
     app = broker_app
     m = msg(app)

@@ -10,6 +10,7 @@ import importlib.metadata
 import io
 import logging
 import os
+import re
 import time
 import types
 from datetime import UTC, datetime, timedelta
@@ -102,19 +103,27 @@ def app():
 
 
 def test_inspect_reports_live_workers_from_heartbeats(app):
+    from potatoq.control import publish_registered
+
     inspect = app.control.inspect()
     assert inspect.ping() is None
-    app.broker.heartbeat(
-        "w1@a:1", {"hostname": "w1@a", "queues": ["default"], "running": ["t1"], "registered": ["core.add"]}
-    )
-    app.broker.heartbeat("w2@b:2", {"hostname": "w2@b", "queues": ["other"]})
+
+    @app.task(name="core.add")
+    def add(x, y):
+        return x + y
+
+    digest = publish_registered(app)  # what a starting worker does
+    app.tasks.unregister("core.add")  # this process's registry doesn't matter
+    app.broker.heartbeat("w1@a:1", {"hostname": "w1@a", "queues": ["default"], "running": ["t1"], "registered": digest})
+    app.broker.heartbeat("w2@b:2", {"hostname": "w2@b", "queues": ["other"], "registered": "gone"})
     app.broker.workers_["dead@c:3"] = {"hostname": "dead@c", "heartbeat": time.time() - 3600}
 
     assert inspect.ping() == {"w1@a:1": {"ok": "pong"}, "w2@b:2": {"ok": "pong"}}
     assert inspect.active() == {"w1@a:1": [{"id": "t1"}], "w2@b:2": []}
     assert inspect.active_queues()["w2@b:2"] == [{"name": "other"}]
     # What each worker registered, not this process's registry.
-    assert inspect.registered() == {"w1@a:1": ["core.add"], "w2@b:2": []}
+    registered = inspect.registered()
+    assert "core.add" in registered["w1@a:1"] and registered["w2@b:2"] == []  # w2's list expired
     assert inspect.scheduled() == inspect.reserved() == {"w1@a:1": [], "w2@b:2": []}
     assert inspect.stats()["w1@a:1"]["hostname"] == "w1@a"
 
@@ -123,6 +132,19 @@ def test_inspect_reports_live_workers_from_heartbeats(app):
     assert list(by_hostname.ping()) == ["w2@b:2"]
     assert list(by_id.ping()) == ["w1@a:1"]
     assert app.control.ping(destination=["w2@b"]) == [{"w2@b:2": {"ok": "pong"}}]
+
+
+def test_publish_registered_without_a_result_store(app, monkeypatch, caplog):
+    from potatoq.control import publish_registered
+
+    monkeypatch.setattr(app.broker, "store_result", lambda *a, **k: 1 / 0)
+    assert publish_registered(app)  # still a digest; inspect just won't find the names
+    assert "Couldn't store the registered task names" in caplog.text
+    app.conf.result_backend = "disabled"
+    app._reset_connections()
+    assert publish_registered(app) is None
+    app.broker.heartbeat("w@x:1", {"hostname": "w@x", "registered": "abc"})
+    assert app.control.inspect().registered() == {"w@x:1": []}
 
 
 def test_control_purge_empties_every_queue(app):
@@ -422,3 +444,20 @@ def test_drain_runs_scheduled_tasks_on_sqlite(tmp_path):
 
 def test_scheduled_tasks_are_not_fast_forwarded_on_other_brokers():
     assert _next_scheduled(types.SimpleNamespace(broker=object()), consumer=None) is None
+
+
+@pytest.mark.parametrize(
+    ("body", "why"),
+    [
+        ('[[1], {}, {"callbacks": null}]', "This is a Celery (protocol 2) message"),
+        ('{"body": "e30=", "headers": {}, "content-type": "application/json"}', "Celery/kombu message envelope"),
+        ('{"id": "x"}', "expected a JSON object with 'task' and 'id' fields, got dict"),
+        ('{"task": "t.x", "args": []}', "it has no 'id'"),
+        ("[1, 2]", "got list"),
+    ],
+)
+def test_messages_from_other_systems_explain_themselves(body, why):
+    from potatoq.message import Message
+
+    with pytest.raises(ValueError, match=re.escape(why)):
+        Message.decode(body)

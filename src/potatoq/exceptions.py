@@ -15,6 +15,25 @@ class ImproperlyConfigured(PotatoqError):
     """Potatoq is configured incorrectly."""
 
 
+class OperationalError(PotatoqError):
+    """The broker couldn't be reached (or refused the operation) while sending tasks.
+
+    Raised by ``.delay()``/``apply_async()`` whatever the broker, like kombu's
+    ``OperationalError`` in Celery. The broker's own exception is ``__cause__``."""
+
+
+class EnqueueAfterCommitError(OperationalError):
+    """Tasks deferred to the end of a transaction couldn't be sent after it committed.
+
+    The transaction's data is saved, but these tasks are lost (each is logged at ERROR
+    on the ``potatoq`` logger with its id). Only with Redis and RabbitMQ: database
+    brokers write tasks inside the transaction."""
+
+    def __init__(self, message: str, task_ids: list[str] | None = None):
+        super().__init__(message)
+        self.task_ids = task_ids or []
+
+
 class NotRegistered(PotatoqError, KeyError):
     """The task is not registered with the app."""
 

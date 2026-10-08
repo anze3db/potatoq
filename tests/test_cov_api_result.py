@@ -120,6 +120,13 @@ def test_forget_and_revoke(memory_app, add):
     assert drain(memory_app) == []
 
 
+def test_revoke_terminate_warns_that_running_tasks_keep_running(memory_app, add, caplog):
+    waiting = add.delay(2, 2)
+    waiting.revoke(terminate=True)
+    assert "revoke(terminate=True) isn't supported yet" in caplog.text
+    assert drain(memory_app) == []  # the waiting task is still revoked
+
+
 def test_as_tuple_round_trip_and_pickle(memory_app):
     parent = AsyncResult("parent", app=memory_app)
     child = AsyncResult("child", app=memory_app, parent=parent)

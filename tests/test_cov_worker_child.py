@@ -302,4 +302,4 @@ def test_logging_level_for_failed_tasks(app, pipe, caplog):
     fail.delay()
     with caplog.at_level(logging.INFO, logger="potatoq.worker"):
         assert child._process(slot, slot.consumer.fetch(timeout=1)) is True
-    assert any(r.levelno == logging.WARNING and "cov.fail" in r.getMessage() for r in caplog.records)
+    assert any(r.levelno == logging.ERROR and "cov.fail" in r.getMessage() for r in caplog.records)

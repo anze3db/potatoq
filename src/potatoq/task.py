@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from . import serialization, states
-from .exceptions import MaxRetriesExceededError, Retry
+from .exceptions import MaxRetriesExceededError, OperationalError, Retry
 from .message import Message, new_id
 
 if TYPE_CHECKING:
@@ -123,6 +123,10 @@ def _to_timestamp(value: float | datetime | timedelta | None, now: float) -> flo
 
 class Task:
     """Base class for tasks. Usually created with ``@app.task``."""
+
+    #: Celery's aliases, for ``except self.MaxRetriesExceededError:``.
+    MaxRetriesExceededError = MaxRetriesExceededError
+    OperationalError = OperationalError
 
     #: Set by the decorator.
     name: str = None  # type: ignore[assignment]
@@ -364,9 +368,14 @@ class Task:
         With Potatoq this is what ``delay()`` already does by default inside a
         transaction (``task_enqueue_on_commit``); this method forces it.
         """
-        self.apply_async(args, kwargs, enqueue_on_commit=True)
+        self.apply_async_on_commit(args, kwargs)
 
     def apply_async_on_commit(self, args: Any = None, kwargs: dict[str, Any] | None = None, **options: Any) -> None:
+        if self.app.conf.task_always_eager:
+            # Like Celery: the task runs when the transaction commits, even in eager
+            # mode (never, in a Django TestCase; use captureOnCommitCallbacks).
+            self.app.on_commit(lambda: self.apply_async(args, kwargs, **options), using=options.get("using"))
+            return
         options["enqueue_on_commit"] = True
         self.apply_async(args, kwargs, **options)
 
@@ -470,7 +479,7 @@ class Task:
             # Celery re-raises the exception when a task is called as a function.
             if exc is not None:
                 raise exc
-            raise MaxRetriesExceededError("Task can't be retried when called directly")
+            raise Retry("Task can be retried")
 
         if max_retries is None:
             max_retries = request.message.options.get("max_retries") if request.message else None

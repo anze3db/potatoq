@@ -68,6 +68,12 @@ class MemoryBroker(Broker):
         self.enqueue([message])
         return True
 
+    def last_periodic_runs(self) -> dict[str, float]:
+        out: dict[str, float] = {}
+        for name, fire_at in self.periodic:
+            out[name] = max(out.get(name, fire_at), fire_at)
+        return out
+
     def promote(self, now: float | None = None) -> None:
         now = time.time() if now is None else now
         with self.lock:

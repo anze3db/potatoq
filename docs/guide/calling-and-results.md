@@ -57,6 +57,25 @@ value = await result.aget(timeout=10)
 Results expire after `result_expires` (1 day). On database brokers `STARTED` is reported
 for free while the task runs.
 
+## When the broker is down
+
+`.delay()` raises `potatoq.exceptions.OperationalError` whatever the broker, like kombu's
+`OperationalError` in Celery (the broker client's own exception is `__cause__`). With
+Redis and RabbitMQ, potatoq first retries for about a second, which covers a restart or
+failover; database brokers reconnect on their own.
+
+```python
+from potatoq.exceptions import OperationalError
+
+try:
+    send_receipt.delay(order.id)
+except OperationalError:
+    ...  # the task wasn't sent
+```
+
+Tasks deferred to the end of a transaction fail differently, after the data is
+committed: see [transactions](transactions.md#if-sending-fails-after-commit).
+
 !!! warning "Don't wait inside tasks"
     `result.get()` inside a task raises `RuntimeError`, because waiting on another task
     from a worker process can deadlock the pool. Use a [chain or chord](workflows.md).
@@ -70,4 +89,5 @@ app.control.revoke(task_id)       # or result.revoke()
 A waiting task is deleted from Postgres, SQLite and Redis before it can run. RabbitMQ
 can't delete queued messages, so the revocation is recorded in the result backend and
 the worker skips the task. Terminating a task that is already *running* is not
-supported; use [time limits](retries-and-failures.md#time-limits).
+supported yet: `revoke(terminate=True)` logs a warning and only revokes it if it hasn't
+started. Use [time limits](retries-and-failures.md#time-limits).

@@ -171,7 +171,7 @@ def test_threads_hard_limit_fails_offender_and_requeues_bystander(wapp, tmp_path
         w.stop()
     starts = [e for e in events(tmp_path, "nap-start") if e["tag"] == "bystander"]
     assert len(starts) == 2 and starts[0]["pid"] != starts[1]["pid"]
-    assert "requeueing 1 other task(s)" in w.output()
+    assert "and requeueing its 1 other task(s)" in w.output()
 
 
 def test_threads_shutdown_timeout_requeues(wapp, tmp_path):  # noqa: F811

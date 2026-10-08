@@ -141,6 +141,7 @@ def _channel(queue: str) -> str:
 class PostgresBroker(Broker):
     schemes = ("postgresql", "postgres")
     transactional = True
+    connection_errors = (psycopg.OperationalError, psycopg.InterfaceError, OSError)
 
     def __init__(self, url: str, app: Any, **options: Any):
         super().__init__(url, app, **options)
@@ -315,6 +316,12 @@ class PostgresBroker(Broker):
                 return True
 
         return self._run(_enqueue)
+
+    def last_periodic_runs(self) -> dict[str, float]:
+        rows = self._run(
+            lambda conn: conn.execute(self._sql("SELECT name, max(fire_at) FROM {periodic} GROUP BY name")).fetchall()
+        )
+        return {name: float(fire_at) for name, fire_at in rows}
 
     def consumer(self, queues: list[str], worker_id: str, pid: int | None = None) -> PostgresConsumer:
         return PostgresConsumer(self, queues, worker_id, pid)

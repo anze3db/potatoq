@@ -14,7 +14,7 @@ app.conf.beat_schedule = {
     "weekdays": {"task": "digest.send", "schedule": crontab(minute=30, hour=7, day_of_week="mon-fri")},
     "raw-cron": {"task": "cleanup.run", "schedule": "*/15 * * * *"},
 }
-app.conf.timezone = "Europe/Ljubljana"   # crontabs run in this timezone (default UTC; Django's TIME_ZONE is used)
+app.conf.timezone = "Europe/Ljubljana"   # crontabs run in this timezone (default UTC; with potatoq.contrib.django, Django's TIME_ZONE)
 ```
 
 Celery's `on_after_configure` idiom works too:
@@ -35,6 +35,20 @@ ping: monitoring.ping <schedule: every 30s> next=2026-10-08 16:41:30 Europe/Ljub
 
 Workers log the same list when they start, and warn about entries whose task isn't
 registered, so a typo shows up at deploy time rather than as a dead letter at fire time.
+
+### Checking that they run
+
+To alert on a periodic task that stopped running, ask when each entry was last sent:
+
+```python
+app.control.last_periodic_runs()
+# {"nightly-report": datetime(2026, 10, 9, 3, 0, tzinfo=UTC), ...}
+```
+
+These are the fire times the scheduler sent, from the broker's claims (Postgres and
+SQLite keep a week of them, Redis the latest per entry; RabbitMQ keeps none).
+`potatoq schedule` shows them too. A task sent by the scheduler carries the entry's name
+in `self.request.headers["periodic"]`, so a bound task can record its own runs.
 
 ## No beat process
 

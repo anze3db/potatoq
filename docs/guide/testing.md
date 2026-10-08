@@ -34,3 +34,11 @@ app.conf.task_always_eager = True    # .delay() runs the task immediately, in-pr
 This behaves as in Celery, with one improvement: arguments still round-trip through the
 serializer, so an eager test fails where production would.
 `task_eager_propagates` (default `True`) re-raises task exceptions.
+
+As in Celery:
+
+- With `task_eager_propagates` (or `task.apply(throw=True)`), a task that retries
+  raises `Retry` at its first retry, so a test can assert that it retried. Without it,
+  the retries run right away, one after another, until the task succeeds or gives up.
+- `delay_on_commit()` waits for the transaction to commit even in eager mode. In a
+  Django `TestCase`, wrap the code in `self.captureOnCommitCallbacks(execute=True)`.

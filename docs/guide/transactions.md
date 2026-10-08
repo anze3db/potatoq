@@ -53,9 +53,43 @@ send_receipt.apply_async((order.id,), using="replica_db")        # Django: anoth
 
 Set `task_enqueue_on_commit = False` to turn this off app-wide.
 
+## If sending fails after COMMIT
+
+With Redis or RabbitMQ, deferred tasks are sent right after COMMIT. If the broker is
+unreachable then (after about a second of retries), the data is already committed but
+the tasks aren't sent:
+
+- each lost task is logged at ERROR on the `potatoq` logger, with its name, id and queue;
+- `potatoq.exceptions.EnqueueAfterCommitError` (an `OperationalError`, with the
+  `task_ids`) is raised where the transaction committed: out of the `atomic()` block in
+  Django, or as a 500 with `ATOMIC_REQUESTS`. Django skips the remaining `on_commit`
+  callbacks of that transaction, as it does for any failing callback. With SQLAlchemy,
+  `commit()` doesn't raise; the rest of the callbacks still run.
+
+This is how Celery's `delay_on_commit`, Rails, Sidekiq and Laravel behave too. Plain
+Celery `.delay()` fails inside the block and rolls back instead, but then a fast worker
+can run the task before the data it needs is committed.
+
+```python
+from potatoq.exceptions import EnqueueAfterCommitError
+
+try:
+    with transaction.atomic():
+        order = Order.objects.create(...)
+        send_receipt.delay(order.id)
+except EnqueueAfterCommitError as exc:
+    ...  # the order exists; exc.task_ids weren't sent
+```
+
+If losing a task this way isn't acceptable, use the Postgres (or SQLite) broker on the
+same database: the task row is part of your transaction, so it commits or rolls back with
+your data.
+
 !!! note "Django tests"
     `TestCase` wraps each test in a transaction that never commits, so deferred tasks
-    are never sent. Use `TransactionTestCase`, Django's `captureOnCommitCallbacks()`, or
-    `task_always_eager = True`, which runs tasks immediately.
+    are never sent. Use `TransactionTestCase`, Django's
+    `captureOnCommitCallbacks(execute=True)`, or `task_always_eager = True`, which runs
+    `.delay()` immediately (`delay_on_commit()` still waits for the commit, as in
+    Celery).
 
 See [Django](../integrations/django.md) and [SQLAlchemy](../integrations/sqlalchemy.md) for setup.

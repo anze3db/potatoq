@@ -45,6 +45,7 @@ nav = [
   { "Reference" = [
     "reference/settings.md",
     "reference/cli.md",
+    "reference/message-format.md",
     "reference/api.md",
   ] },
   { "Design" = [

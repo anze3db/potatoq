@@ -222,3 +222,31 @@ def test_eager_task_inside_atomic_keeps_the_callers_connection(django_env):
                 cur.execute("SELECT 1")
     finally:
         app.conf.task_always_eager = False
+
+
+def test_eager_delay_on_commit_waits_for_the_commit_like_celery(django_env):
+    from django.db import transaction
+    from djangoproj.shop.tasks import audit
+
+    from potatoq import signals
+
+    app = django_env
+    ran = []
+
+    def record(sender=None, args=None, **kwargs):
+        ran.append(args)
+
+    signals.task_prerun.connect(record)
+    app.conf.task_always_eager = True
+    try:
+        with transaction.atomic():
+            audit.delay_on_commit("created")
+            assert ran == []  # not inside the transaction
+        assert ran == [["created"]]
+        with transaction.atomic():
+            audit.delay_on_commit("rolled back")
+            transaction.set_rollback(True)
+        assert ran == [["created"]]
+    finally:
+        app.conf.task_always_eager = False
+        signals.task_prerun.disconnect(record)

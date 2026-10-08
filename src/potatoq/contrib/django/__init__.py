@@ -320,7 +320,7 @@ class DjangoTransactionHook:
             conn.ensure_connection()
             app.publish_now(messages, connection=conn.connection)
             return True
-        transaction.on_commit(lambda: app.publish_now(messages), using=conn.alias)
+        transaction.on_commit(lambda: app.publish_after_commit(messages), using=conn.alias)
         return True
 
     def on_commit(self, fn: Any, using: Any) -> bool:

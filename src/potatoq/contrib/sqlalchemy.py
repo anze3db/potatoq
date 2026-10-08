@@ -37,6 +37,8 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import event
 from sqlalchemy.orm import Session
 
+from ..exceptions import EnqueueAfterCommitError
+
 if TYPE_CHECKING:
     from ..app import Potatoq
     from ..message import Message
@@ -111,6 +113,8 @@ def _after_transaction_end(session: Session, transaction: Any) -> None:
         for _, fn in callbacks:
             try:
                 fn()
+            except EnqueueAfterCommitError:
+                pass  # already logged, one line per lost task
             except Exception:
                 logger.exception("Callback deferred to COMMIT failed: %r", fn)
 
@@ -186,7 +190,7 @@ class SQLAlchemyTransactionHook:
             dbapi = session.connection().connection.driver_connection
             app.publish_now(messages, connection=dbapi)
             return True
-        _defer(session, lambda: app.publish_now(messages))
+        _defer(session, lambda: app.publish_after_commit(messages))
         return True
 
     def on_commit(self, fn: Any, using: Any) -> bool:

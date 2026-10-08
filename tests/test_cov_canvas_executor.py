@@ -9,7 +9,7 @@ import pytest
 
 from potatoq import Potatoq, Task, chain, chord, group, states
 from potatoq.canvas import Signature
-from potatoq.exceptions import ChordError, Ignore, NotRegistered, WorkerTerminate
+from potatoq.exceptions import ChordError, Ignore, NotRegistered, Retry, WorkerTerminate
 from potatoq.message import Message
 from potatoq.testing import drain
 from potatoq.worker import executor
@@ -406,7 +406,10 @@ def test_execute_eagerly_follows_retries_links_and_stores_results(memory_app, ad
         return x
 
     memory_app.conf.task_store_eager_result = True
-    result = flaky.apply((5,), link=add.s(1))
+    with pytest.raises(Retry, match="Retry in 60s"):  # propagating, like Celery: raise the first retry
+        flaky.apply((5,))
+    attempts.clear()
+    result = flaky.apply((5,), link=add.s(1), throw=False)  # not propagating: follow the retries
     assert result.get() == 5 and attempts == [0, 1, 2]
     assert memory_app.backend.get_result(result.id).state == states.SUCCESS
     link_results = [r for r in memory_app.broker.results if r != result.id]
@@ -433,18 +436,56 @@ def test_settle_refuses_unknown_actions(memory_app, add):
 
 
 def test_log_done_says_what_happened_and_how_long_the_attempt_ran(caplog):
+    from potatoq.exceptions import MaxRetriesExceededError, NotRegistered, Retry
+
     message = Message(task="t.x", id="m1")
     caplog.set_level(logging.INFO, logger="potatoq")
-    for state, action in [
-        (executor.COMPLETE, states.SUCCESS),
-        (executor.RETRY, states.RETRY),
-        (executor.COMPLETE, "WEIRD"),
-    ]:
-        outcome = executor.Outcome(state, action)
+
+    def boom():
+        try:
+            raise ValueError("boom")
+        except ValueError as exc:
+            return exc
+
+    cases = [
+        executor.Outcome(executor.COMPLETE, states.SUCCESS),
+        executor.Outcome(executor.RETRY, states.RETRY, exc=KeyError("k"), retry=Retry(when=8.782)),
+        executor.Outcome(executor.RETRY, states.RETRY, exc=KeyError("k")),
+        executor.Outcome(executor.COMPLETE, states.FAILURE, exc=boom()),
+        executor.Outcome(executor.DEAD_LETTER, states.FAILURE, exc=NotRegistered("t.x")),
+        executor.Outcome(executor.COMPLETE, states.FAILURE, exc=MaxRetriesExceededError("no more")),
+        executor.Outcome(executor.DEAD_LETTER, states.FAILURE, reason="Traceback...\nValueError: earlier\n"),
+        executor.Outcome(executor.COMPLETE, states.REVOKED, reason="expired"),
+        executor.Outcome(executor.COMPLETE, states.IGNORED),
+        executor.Outcome(executor.DEAD_LETTER, states.REJECTED, reason="bad input"),
+        executor.Outcome(executor.COMPLETE, "WEIRD"),
+    ]
+    for outcome in cases:
         outcome.runtime = 0.0084
         executor.log_done(message, outcome)
-    assert [(r.levelno, r.getMessage()) for r in caplog.records] == [
-        (logging.INFO, "Task t.x[m1] succeeded (ran 0.008s)"),
-        (logging.INFO, "Task t.x[m1] will be retried (ran 0.008s)"),
-        (logging.WARNING, "Task t.x[m1] weird (ran 0.008s)"),
+    assert [(r.levelname, r.getMessage()) for r in caplog.records] == [
+        ("INFO", "Task t.x[m1] succeeded in 8ms"),
+        ("INFO", "Task t.x[m1] failed in 8ms, will retry in 8.78s: KeyError('k')"),
+        ("INFO", "Task t.x[m1] failed in 8ms, will retry later: KeyError('k')"),
+        ("ERROR", "Task t.x[m1] failed in 8ms: ValueError('boom')"),
+        (
+            "ERROR",
+            "Task t.x[m1] failed in 8ms and was dead-lettered: it isn't registered in this worker (is its module imported?)",
+        ),
+        ("ERROR", "Task t.x[m1] failed in 8ms: max retries exceeded"),
+        ("ERROR", "Task t.x[m1] failed in 8ms and was dead-lettered: ValueError: earlier"),
+        ("INFO", "Task t.x[m1] revoked: expired"),
+        ("INFO", "Task t.x[m1] ignored"),
+        ("WARNING", "Task t.x[m1] rejected: bad input"),
+        ("INFO", "Task t.x[m1] weird"),
     ]
+    assert caplog.records[3].exc_info is not None  # the traceback goes with the failure
+    assert caplog.records[0].potatoq_event == "success" and caplog.records[0].task_id == "m1"
+
+
+@pytest.mark.parametrize(
+    ("seconds", "text"),
+    [(0.0004, "400µs"), (0.012, "12ms"), (1.254, "1.25s"), (42.0, "42.0s"), (245, "4m05s"), (7380, "2h03m")],
+)
+def test_duration(seconds, text):
+    assert executor.duration(seconds) == text

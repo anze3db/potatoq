@@ -14,6 +14,7 @@ import pytest
 
 from potatoq import Potatoq, serialization
 from potatoq.brokers.base import Delivery
+from potatoq.config import redact_url
 from potatoq.message import Message
 from potatoq.worker import supervisor as sup_mod
 from potatoq.worker.supervisor import ChildProc, Running, Supervisor, default_concurrency, parse_memory
@@ -87,7 +88,7 @@ def message(app, *, errback: bool = False, **kw) -> Message:
 def child_with(sup, *deliveries: Delivery, **kw) -> ChildProc:
     child = ChildProc(pid=FAKE_PID, index=1, read_fd=-1, **kw)
     for d in deliveries:
-        child.running[d.message.id] = Running(delivery=d, started=time.time() - 3, hard_deadline=None)
+        child.running[d.message.id] = Running(delivery=d, started=time.time() - 3.4, hard_deadline=None, limit=3)
     return child
 
 
@@ -153,11 +154,11 @@ def test_parse_memory_rejects_garbage():
 
 
 def test_redact_hides_passwords():
-    assert sup_mod._redact("redis://user:secret@host:6379/0") == "redis://user:***@host:6379/0"
-    assert sup_mod._redact("amqp://guest@rabbit//") == "amqp://guest@rabbit//"
-    assert sup_mod._redact("postgresql://u:p@ss@db/x") == "postgresql://u:***@db/x"
-    assert sup_mod._redact("memory://") == "memory://"
-    assert sup_mod._redact("sqlite:///tmp/a@b.db") == "sqlite:///tmp/a@b.db"
+    assert redact_url("redis://user:secret@host:6379/0") == "redis://user:***@host:6379/0"
+    assert redact_url("amqp://guest@rabbit//") == "amqp://guest@rabbit//"
+    assert redact_url("postgresql://u:p@ss@db/x") == "postgresql://u:***@db/x"
+    assert redact_url("memory://") == "memory://"
+    assert redact_url("sqlite:///tmp/a@b.db") == "sqlite:///tmp/a@b.db"
 
 
 def test_to_handle_turns_json_lists_back_into_tuples():
@@ -462,7 +463,9 @@ def test_timed_out_task_is_recorded_as_failed_when_the_broker_redelivers(app, su
     sup._handle_lost(child, delivery, -9)
     result = app.backend.get_result(delivery.message.id)
     assert result.state == "FAILURE"
-    assert "exceeded its time limit (3s) and was killed" in caplog.text
+    assert (
+        "exceeded its time limit (3s) and was killed" in result.result["exc_message"][0]
+    )  # the limit, not the runtime
     assert [m.task for m in published] == ["cov.errback"]
     assert published[0].args == [delivery.message.id]
     assert sup.consumer.requeued == []  # RabbitMQ redelivers by itself
@@ -475,8 +478,13 @@ def test_timed_out_task_without_running_entry(app, sup, monkeypatch, caplog):
     delivery = Delivery(message(app, ignore_result=True))
     child = child_with(sup)
     child.timed_out.add(delivery.message.id)
+    outcomes = []
+    real = sup_mod.executor.failure_outcome
+    monkeypatch.setattr(
+        sup_mod.executor, "failure_outcome", lambda a, m, exc, h: outcomes.append(exc) or real(a, m, exc, h)
+    )
     sup._handle_lost(child, delivery, -9)
-    assert "time limit exceeded" in caplog.text
+    assert str(outcomes[0]) == "time limit exceeded"
     assert app.backend.get_result(delivery.message.id) is None  # ignore_result: nothing stored
     assert published == []
 
@@ -537,9 +545,11 @@ def test_loop_recovers_dead_nodes_and_runs_maintenance(app, sup, monkeypatch):
 
     monkeypatch.setattr(app.broker, "recover", recover)
     monkeypatch.setattr(app.broker, "maintenance", lambda: calls.append("maintenance"))
+    monkeypatch.setattr(sup_mod, "publish_registered", lambda app: calls.append("registered"))
     monkeypatch.setattr(sup, "_reap", lambda: None)
+    sup.registered_refresh = 0.0
     sup._loop()
-    assert calls == ["recover", "maintenance", "recover", "maintenance"]
+    assert calls == ["recover", "maintenance", "registered", "recover", "maintenance", "registered"]
     record = app.backend.get_result(dead.message.id)
     assert record.state == "FAILURE"
     assert "Worker node died while running cov.boom" in record.traceback

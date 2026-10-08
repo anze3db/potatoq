@@ -7,7 +7,7 @@ $ potatoq [-A APP] [-b BROKER_URL] [--result-backend URL] [--workdir DIR] COMMAN
 `-A` accepts `proj`, `proj.module` or `proj.module:attribute`. It finds an `app`,
 `potatoq` or `celery` attribute, or a `potatoq.py`/`celery.py` submodule. With
 `DJANGO_SETTINGS_MODULE` set, `-A` is optional. Every command is also available as
-`python manage.py potatoq …`.
+`python manage.py potatoq …` and `python -m potatoq …`.
 
 | Command | |
 |---|---|

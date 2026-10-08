@@ -31,6 +31,8 @@ from typing import TYPE_CHECKING, Any
 
 from .. import serialization, signals
 from ..brokers.base import Delivery
+from ..config import redact_url
+from ..control import publish_registered
 from ..exceptions import TimeLimitExceeded, WorkerLostError
 from ..message import Message
 from . import executor
@@ -81,6 +83,8 @@ class Running:
     delivery: Delivery
     started: float
     hard_deadline: float | None
+    #: The task's hard time limit in seconds.
+    limit: float | None = None
 
 
 @dataclass
@@ -100,6 +104,9 @@ class ChildProc:
 
 
 class Supervisor:
+    #: Seconds between re-storing the registered task names (they expire after a week).
+    registered_refresh = 3600.0
+
     def __init__(
         self,
         app: Potatoq,
@@ -124,6 +131,7 @@ class Supervisor:
             queues = [q.strip() for q in queues.split(",") if q.strip()]
         self.queues = list(queues or [conf.task_default_queue])
         self.hostname = hostname or f"potatoq@{socket.gethostname()}"
+        self.registered_digest: str | None = None
         self.node_id = f"{self.hostname}:{os.getpid()}:{random.randrange(16**6):06x}"
         self.loglevel = loglevel
         self.logfile = logfile
@@ -155,6 +163,7 @@ class Supervisor:
         app.loader_import_default_modules()
         signals.worker_init.send(sender=self)
         broker = app.broker  # connects and creates the schema
+        self.registered_digest = publish_registered(app)
         self.consumer = broker.consumer(self.queues, self.node_id, pid=0)
         broker.heartbeat(self.node_id, self._info())
         self._install_signals()
@@ -181,15 +190,15 @@ class Supervisor:
             "concurrency": self.concurrency,
             "threads": self.threads,
             "running": [task_id for c in self.children.values() for task_id in c.running],
-            "registered": sorted(n for n in self.app.tasks if not n.startswith("potatoq.")),
+            "registered": self.registered_digest,
         }
 
     def _banner(self) -> None:
         from .. import __version__
 
-        broker_url = _redact(self.app.broker.url)
+        broker_url = redact_url(self.app.broker.url)
         backend = self.app.backend
-        results = _redact(backend.url) if backend else "disabled"
+        results = redact_url(backend.url) if backend else "disabled"
         ignore = self.app.conf.task_ignore_result
         if backend and (ignore or (ignore is None and not self.app.results_enabled_by_default())):
             # Tasks can still opt in with ignore_result=False.
@@ -304,11 +313,13 @@ class Supervisor:
                     handle=_to_handle(event["handle"]),
                 )
                 hard = event.get("hard")
+                limit = hard - event["started"] if hard else None
                 child.running[delivery.message.id] = Running(
                     delivery=delivery,
                     started=event["started"],
                     # A little grace so the soft limit's exception can be handled first.
-                    hard_deadline=time.monotonic() + (hard - event["started"]) + 1.0 if hard else None,
+                    hard_deadline=time.monotonic() + limit + 1.0 if limit else None,
+                    limit=limit,
                 )
             elif event["e"] == "done":
                 child.running.pop(event["id"], None)
@@ -364,13 +375,13 @@ class Supervisor:
         consumer = self.consumer
         if message.id in child.timed_out:
             running = child.running.get(message.id)
-            hard = (time.time() - running.started) if running else None
+            limit = running.limit if running else None
             exc: BaseException = TimeLimitExceeded(
-                f"Task {message.task}[{message.id}] exceeded its time limit ({hard:.0f}s) and was killed"
-                if hard
+                f"Task {message.task}[{message.id}] exceeded its time limit ({limit:g}s) and was killed"
+                if limit
                 else "time limit exceeded"
             )
-            logger.error("%s", exc)
+            # Logged once, when the process was killed (_enforce_time_limits).
             outcome = executor.failure_outcome(app, message, exc, self.hostname)
         elif (self.shutting_down and child.abort_sent) or child.killed_for_timeout:
             # Interrupted by shutdown, or an innocent bystander of another task's hard
@@ -417,6 +428,7 @@ class Supervisor:
             "recover": now + random.uniform(1, 5),
             "tick": now + 1.0,
             "maintenance": now + random.uniform(30, 90),
+            "registered": now + self.registered_refresh,
             "scheduler": now + 0.5,
         }
         while True:
@@ -467,6 +479,9 @@ class Supervisor:
                 if now >= timers["maintenance"]:
                     timers["maintenance"] = now + random.uniform(45, 75)
                     broker.maintenance()
+                if now >= timers["registered"]:
+                    timers["registered"] = now + self.registered_refresh
+                    publish_registered(self.app)  # refresh before it expires
                 if self.scheduler is not None and now >= timers["scheduler"]:
                     self.scheduler.tick()
                     timers["scheduler"] = now + min(1.0, max(0.05, self.scheduler.seconds_until_next()))
@@ -484,10 +499,13 @@ class Supervisor:
                 child.killed_for_timeout = True
                 child.timed_out.update(expired)
                 others = len(child.running) - len(expired)
-                logger.error(
-                    "Hard time limit exceeded by %s; killing child %d%s",
-                    ", ".join(expired), child.pid, f" (requeueing {others} other task(s))" if others else "",
-                )  # fmt: skip
+                for tid in expired:
+                    r = child.running[tid]
+                    logger.error(
+                        "Task %s[%s] exceeded its time limit (%gs); killing process %d%s",
+                        r.delivery.message.task, tid, r.limit, child.pid,
+                        f" and requeueing its {others} other task(s)" if others else "",
+                    )  # fmt: skip
                 self._kill(child, signal.SIGKILL)
 
     def _shutdown_step(self, now: float) -> None:
@@ -519,12 +537,3 @@ class Supervisor:
 
 def _to_handle(handle: Any) -> Any:
     return tuple(handle) if isinstance(handle, list) else handle
-
-
-def _redact(url: str) -> str:
-    if "@" in url and "://" in url:
-        scheme, rest = url.split("://", 1)
-        creds, host = rest.rsplit("@", 1)
-        user = creds.split(":", 1)[0]
-        return f"{scheme}://{user}:***@{host}" if ":" in creds else f"{scheme}://{user}@{host}"
-    return url

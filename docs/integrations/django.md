@@ -140,6 +140,11 @@ app.config_from_object("django.conf:settings", namespace="CELERY")
 app.autodiscover_tasks()
 ```
 
+Keep `"potatoq.contrib.django"` in `INSTALLED_APPS` too: it's what hooks potatoq into
+Django (enqueue on commit, connection handling, the database broker, `TIME_ZONE`).
+Without it, potatoq assumes nothing about Django, so set `CELERY_TIMEZONE` for your
+crontabs: `TIME_ZONE` isn't read.
+
 ## Tests
 
 `TestCase` never commits, so tasks enqueued inside it are never sent. Either set

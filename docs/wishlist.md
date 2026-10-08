@@ -85,7 +85,8 @@ Behaviour that's accepted for compatibility but not implemented yet.
 - [ ] **Enforce `rate_limit`.** It's accepted (with a warning) but ignored. Plan: a
   **global**, broker-backed token bucket (Redis script, SQL row, result-backend counter
   for RabbitMQ). Celery's limit is per worker, which is rarely what you want.
-- [ ] **`revoke(terminate=True)` for running tasks.** Waiting tasks are revoked today.
+- [ ] **`revoke(terminate=True)` for running tasks.** Waiting tasks are revoked today, and
+  `terminate=True` logs a warning.
   For running ones, the supervisor knows which process runs which task, so it could
   inject `TaskRevokedError` (threads) or signal the process (prefork).
 - [ ] **Redis Cluster.** Scripts touch keys of several queues, so they'd need per-queue
@@ -96,8 +97,11 @@ Behaviour that's accepted for compatibility but not implemented yet.
 - [ ] **Windows.** Workers need `fork()` and POSIX signals. A spawn-based worker would
   be needed; WSL works today.
 - [ ] **`solar` schedules** (sunrise/sunset), from Celery.
-- [ ] **Catch up missed periodic runs.** A run due while every worker is down is skipped
-  once it's 60 s late: a starting scheduler only looks back 60 s. A daily job is lost
+- [ ] **Catch up missed periodic runs, with a configurable window.** A run due while every
+  worker is down is skipped once it's 60 s late: a starting scheduler only looks back 60 s
+  (and not at all on RabbitMQ). Make the window a setting, like django-celery-beat's
+  `CELERY_BEAT_CRON_STARTING_DEADLINE` (one app migrating from Celery uses an hour, after
+  a deploy made beat skip its nightly scans). A daily job is lost
   if the only worker is down for longer around its fire time, where Celery's `beat` would
   send it once on restart. On RabbitMQ, leader failover (about 1 s, or about 60 s when a
   host is lost) also skips runs due in that window, and can send one twice.
@@ -122,6 +126,8 @@ What people get from Flower and friends today.
   plus a stack-dump signal for stuck workers.
 - [ ] **OpenTelemetry**: carry trace context from `delay()` into the task, with spans
   for enqueue and execution.
+- [ ] **Producer libraries for other languages**, or a stable way to enqueue on Redis
+  from outside Python ([message format](reference/message-format.md)).
 - [ ] **APM integrations** (New Relic, Datadog): their agents instrument Celery tasks as
   background transactions, but not potatoq's. Until then, wrap tasks with
   `task_prerun`/`task_postrun` signals.

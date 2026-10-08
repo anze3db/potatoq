@@ -11,7 +11,7 @@ import pytest
 
 from potatoq import Task, states
 from potatoq.canvas import group
-from potatoq.exceptions import MaxRetriesExceededError, Replace, Retry
+from potatoq.exceptions import Replace, Retry
 from potatoq.message import Message
 from potatoq.task import Context, run_coroutine
 from potatoq.testing import drain
@@ -209,7 +209,7 @@ def test_retry_when_called_directly(memory_app):
 
     with pytest.raises(KeyError, match="original"):
         direct(True)
-    with pytest.raises(MaxRetriesExceededError, match="called directly"):
+    with pytest.raises(Retry, match="Task can be retried"):  # like Celery
         direct(False)
 
 

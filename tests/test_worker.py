@@ -102,7 +102,7 @@ def test_hard_time_limit_kills_and_fails(wapp, tmp_path):
         assert workerapp.add.delay(1, 2).get(timeout=20) == 3
     finally:
         w.stop()
-    assert "Hard time limit exceeded" in w.output()
+    assert "workerapp.hang[" in w.output() and "exceeded its time limit (" in w.output()
 
 
 def test_crashing_task_is_dead_lettered_after_max_deliveries(wapp, tmp_path):

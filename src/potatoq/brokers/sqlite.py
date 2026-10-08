@@ -121,6 +121,7 @@ def _path_from_url(url: str) -> str:
 class SQLiteBroker(Broker):
     schemes = ("sqlite",)
     transactional = True
+    connection_errors = (sqlite3.OperationalError, OSError)  # e.g. "database is locked"
 
     def __init__(self, url: str, app: Any, **options: Any):
         super().__init__(url, app, **options)
@@ -215,6 +216,10 @@ class SQLiteBroker(Broker):
                 return False
             self._insert(conn, [message])
             return True
+
+    def last_periodic_runs(self) -> dict[str, float]:
+        rows = self.conn.execute("SELECT name, max(fire_at) FROM potatoq_periodic GROUP BY name").fetchall()
+        return {name: float(fire_at) for name, fire_at in rows}
 
     def consumer(self, queues: list[str], worker_id: str, pid: int | None = None) -> SQLiteConsumer:
         return SQLiteConsumer(self, queues, worker_id, pid)

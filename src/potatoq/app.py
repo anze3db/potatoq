@@ -16,8 +16,14 @@ from typing import TYPE_CHECKING, Any
 
 from . import signals, states
 from .brokers import broker_for_url
-from .config import Settings, load_object
-from .exceptions import ImproperlyConfigured, NotRegistered, ResultBackendDisabled
+from .config import Settings, load_object, redact_url
+from .exceptions import (
+    EnqueueAfterCommitError,
+    ImproperlyConfigured,
+    NotRegistered,
+    OperationalError,
+    ResultBackendDisabled,
+)
 from .message import Message
 from .task import Context, Task
 from .task import Task as BaseTask
@@ -36,6 +42,8 @@ _implicit_app: Potatoq | None = None
 _shared_tasks: list[Callable[[Potatoq], Task]] = []
 _apps: list[Potatoq] = []
 _inherited: list[Any] = []
+#: Seconds between publish attempts while the broker is unreachable (about 1 s in all).
+_PUBLISH_RETRY_DELAYS = (0.1, 0.25, 0.5)
 
 
 def current_app() -> Potatoq:
@@ -80,7 +88,20 @@ class Potatoq:
     under Django, or a local SQLite file for development.
     """
 
-    Task: type[BaseTask] = BaseTask
+    _task_cls: type[BaseTask] | str = BaseTask
+
+    @property
+    def Task(self) -> type[BaseTask]:
+        """The base class for this app's tasks. A ``task_cls`` string is imported on
+        first use, like Celery: under Django it may import models."""
+        cls = self._task_cls
+        if isinstance(cls, str):
+            cls = self._task_cls = load_object(cls)
+        return cls
+
+    @Task.setter
+    def Task(self, value: type[BaseTask] | str) -> None:
+        self._task_cls = value
 
     def __init__(
         self,
@@ -115,7 +136,7 @@ class Potatoq:
         self.on_after_finalize = signals.Signal("on_after_finalize")
         self.on_after_fork = signals.Signal("on_after_fork")
         if task_cls is not None:
-            self.Task = load_object(task_cls) if isinstance(task_cls, str) else task_cls
+            self.Task = task_cls
         if config_source is not None:
             self.config_from_object(config_source, namespace=namespace)
         if broker:
@@ -195,8 +216,9 @@ class Potatoq:
         self, fun: Callable[..., Any], name: str | None = None, base: Any = None, bind: bool = False, **options: Any
     ) -> BaseTask:
         name = name or self.gen_task_name(fun.__name__, fun.__module__)
-        if name in self.tasks and getattr(self.tasks[name], "__wrapped__", None) is fun:
-            return self.tasks[name]
+        # The registry itself, not .tasks: defining a task mustn't finalize the app.
+        if name in self._tasks and getattr(self._tasks[name], "__wrapped__", None) is fun:
+            return self._tasks[name]
         unknown = set(options) - Task.OPTION_NAMES
         if unknown:
             raise TypeError(f"Unknown task option(s) for {name}: {', '.join(sorted(unknown))}")
@@ -234,7 +256,7 @@ class Potatoq:
         attrs.update(options)
         task_cls = type(fun.__name__, (base,), attrs)
         task = task_cls()
-        self.tasks.register(task)
+        self._tasks.register(task)
         return task
 
     def resolve_task(self, name: str) -> BaseTask | None:
@@ -267,16 +289,17 @@ class Potatoq:
             task.app = self
         if not task.name:
             task.name = self.gen_task_name(type(task).__name__, type(task).__module__)
-        self.tasks.register(task)
+        self._tasks.register(task)
         return task
 
     def _register_builtin_tasks(self) -> None:
-        @self.task(name="potatoq.starmap", ignore_result=False)
+        # The plain base class: a task_cls string may only be importable later (Django).
+        @self.task(name="potatoq.starmap", ignore_result=False, base=BaseTask)
         def starmap(task: str, it: list[Any]) -> list[Any]:
             fun = self.tasks[task]
             return [fun(*item) for item in it]
 
-        @self.task(name="potatoq.accumulate")
+        @self.task(name="potatoq.accumulate", base=BaseTask)
         def accumulate(*args: Any, **kwargs: Any) -> Any:
             index = kwargs.get("index")
             return args[index] if index is not None else args
@@ -501,13 +524,47 @@ class Potatoq:
                 sender=message.task, body=message.to_dict(), exchange="", routing_key=message.queue,
                 headers=message.headers, properties={}, declare=[], retry_policy=None,
             )  # fmt: skip
-        self.broker.enqueue(messages, connection=connection)
+        broker = self.broker
+        # Like Celery, ride out a broker blip (failover, restart) for about a second.
+        # Database brokers reconnect on their own, and publishing inside the caller's
+        # transaction can't be retried.
+        delays = list(_PUBLISH_RETRY_DELAYS) if connection is None and not broker.transactional else []
+        while True:
+            try:
+                broker.enqueue(messages, connection=connection)
+                break
+            except broker.connection_errors as exc:
+                if delays:
+                    time.sleep(delays.pop(0))
+                    continue
+                names = ", ".join(sorted({m.task for m in messages}))
+                raise OperationalError(f"Couldn't send {names} to {redact_url(broker.url)}: {exc}") from exc
         for message in messages:
             signals.after_task_publish.send(
                 sender=message.task, body=message.to_dict(), exchange="", routing_key=message.queue
             )
 
-    def on_commit(self, fn: Callable[[], None], using: Any = None) -> None:
+    def publish_after_commit(self, messages: list[Message]) -> None:
+        """Send tasks deferred to the end of a transaction that has just committed.
+
+        If the broker is down, the committed data stays and the tasks are lost: each is
+        logged at ERROR, and :class:`~potatoq.exceptions.EnqueueAfterCommitError` is
+        raised to the code that committed, like Celery's ``delay_on_commit``."""
+        try:
+            self.publish_now(messages)
+        except OperationalError as exc:
+            for message in messages:
+                logger.error(
+                    "Lost task %s[%s] (queue %s): the transaction committed but the task couldn't be sent: %s",
+                    message.task, message.id, message.queue, exc.__cause__ or exc,
+                    extra={"potatoq_event": "lost", "task_name": message.task, "task_id": message.id},
+                )  # fmt: skip
+            raise EnqueueAfterCommitError(
+                f"The transaction committed, but {len(messages)} task(s) couldn't be sent: {exc}",
+                task_ids=[m.id for m in messages],
+            ) from exc.__cause__
+
+    def on_commit(self, fn: Callable[[], Any], using: Any = None) -> None:
         """Run ``fn`` after the current transaction commits (or now, if there is none)."""
         for hook in self._transaction_hooks:
             if hook.on_commit(fn, using):

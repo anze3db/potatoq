@@ -14,6 +14,7 @@ import time
 from typing import Any
 
 from .app import Potatoq, current_app
+from .config import redact_url
 
 logger = logging.getLogger("potatoq")
 
@@ -175,6 +176,8 @@ def main(argv: list[Any] | None = None, prog: str = "potatoq") -> int:
     args = build_parser(prog).parse_args([str(a) for a in argv])
     if args.workdir:
         os.chdir(args.workdir)
+    if app_obj is not None:
+        _setup_django()  # app.worker_main() in a Django project: as find_app would
     app = app_obj or find_app(args.app)
     if args.broker:
         app.conf.broker_url = args.broker
@@ -284,7 +287,10 @@ def run_solo(app: Potatoq, args: argparse.Namespace) -> int:
         if scheduler:
             scheduler.start()
     current: dict[str, Any] = {}
+    from .control import publish_registered
+
     info = {"hostname": hostname, "pid": os.getpid(), "queues": queues, "concurrency": 1}
+    info["registered"] = publish_registered(app)
     done = threading.Event()
 
     def heartbeat() -> None:
@@ -466,13 +472,12 @@ def cmd_inspect(app: Potatoq, args: argparse.Namespace) -> int:
 
 
 def cmd_migrate(app: Potatoq, args: argparse.Namespace) -> int:
-    from .worker.supervisor import _redact
 
     app.broker.setup()
-    print(f"Broker set up: {_redact(app.broker.url)}")
+    print(f"Broker set up: {redact_url(app.broker.url)}")
     if app.backend is not None and app.backend is not app.broker:
         app.backend.setup()
-        print(f"Result backend set up: {_redact(app.backend.url)}")
+        print(f"Result backend set up: {redact_url(app.backend.url)}")
     return 0
 
 

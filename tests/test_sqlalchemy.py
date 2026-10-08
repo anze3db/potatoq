@@ -286,6 +286,31 @@ def test_commit_sends_even_if_one_callback_fails(mem_app, engine, caplog):
         assert session.scalars(select(User.id)).all() == [1, 2]
 
 
+def test_tasks_lost_after_commit_are_logged_once_each(mem_app, engine, caplog, monkeypatch):
+    from potatoq import app as app_module
+
+    Base, User, _ = models()
+    Base.metadata.create_all(engine)
+
+    @mem_app.task(name="sqla.notify")
+    def notify(x):
+        return x
+
+    def down(messages, connection=None):
+        raise ConnectionRefusedError("broker down")
+
+    monkeypatch.setattr(app_module, "_PUBLISH_RETRY_DELAYS", ())
+    monkeypatch.setattr(mem_app.broker, "enqueue", down)
+    with Session(engine) as session, caplog.at_level(logging.ERROR):
+        session.add(User(id=1))
+        lost = notify.delay(1)
+        session.commit()  # the data committed: commit() must not raise
+    assert [r.getMessage() for r in caplog.records] == [
+        f"Lost task sqla.notify[{lost.id}] (queue default): the transaction committed but the task couldn't be "
+        "sent: broker down"
+    ]
+
+
 @pytest.mark.parametrize("end", ["close", "reset"])
 def test_close_without_commit_drops_deferred_tasks(mem_app, engine, end):
     Base, User, _ = models()

@@ -239,3 +239,13 @@ def load_object(path: str) -> Any:
         if not module_name:
             raise
         return getattr(importlib.import_module(module_name), attr)
+
+
+def redact_url(url: str) -> str:
+    """``scheme://user:***@host``: never log or print a password."""
+    if "@" in url and "://" in url:
+        scheme, rest = url.split("://", 1)
+        creds, host = rest.rsplit("@", 1)
+        user = creds.split(":", 1)[0]
+        return f"{scheme}://{user}:***@{host}" if ":" in creds else f"{scheme}://{user}@{host}"
+    return url

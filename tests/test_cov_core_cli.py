@@ -358,12 +358,19 @@ def test_inspect(app, capsys):
     assert run(app, "inspect", "ping") == 1
     assert capsys.readouterr().out == "Error: No nodes replied.\n"
 
-    app.broker.heartbeat("w1@host:1", {"hostname": "w1@host", "queues": ["default"], "registered": ["cli.x"]})
+    from potatoq.control import publish_registered
+
+    @app.task(name="cli.x")
+    def x():
+        pass
+
+    digest = publish_registered(app)
+    app.broker.heartbeat("w1@host:1", {"hostname": "w1@host", "queues": ["default"], "registered": digest})
     app.broker.heartbeat("w2@host:2", {"hostname": "w2@host", "queues": ["other"]})
     assert run(app, "inspect", "active_queues", "-d", "w2@host") == 0
     assert json.loads(capsys.readouterr().out) == {"w2@host:2": [{"name": "other"}]}
     assert run(app, "inspect", "registered") == 0
-    assert json.loads(capsys.readouterr().out)["w1@host:1"] == ["cli.x"]
+    assert "cli.x" in json.loads(capsys.readouterr().out)["w1@host:1"]
 
 
 # --- queues / purge / call / result / revoke ----------------------------------------
@@ -608,3 +615,24 @@ def test_solo_worker_heartbeats_while_a_task_runs(app, monkeypatch, caplog):
     assert run(app, "worker", "-P", "solo", "--no-scheduler") == 0
     assert len(seen["running"]) == 1 and len(seen["running"][0]) == 1
     assert "Heartbeat failed" in caplog.text
+
+
+def test_worker_main_sets_up_django(app, monkeypatch):
+    """app.worker_main() in a Django project (DJANGO_SETTINGS_MODULE set) must set Django
+    up, or worker processes fail with AppRegistryNotReady."""
+    import django
+    from django.apps import apps
+
+    setups = []
+    monkeypatch.setenv("DJANGO_SETTINGS_MODULE", "proj.settings")
+    monkeypatch.setattr(apps, "ready", False)
+    monkeypatch.setattr(django, "setup", lambda: setups.append("setup"))
+    assert run(app, "queues") == 0
+    assert setups == ["setup"]
+
+
+def test_python_dash_m_potatoq():
+    import subprocess
+
+    out = subprocess.run([sys.executable, "-m", "potatoq", "--help"], capture_output=True, text=True, check=True)
+    assert out.stdout.startswith("usage: potatoq")

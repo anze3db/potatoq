@@ -58,14 +58,6 @@ def set_body_guard(guard: Any) -> None:
 COMPLETE = "complete"  # ack (task succeeded or failed terminally)
 RETRY = "retry"  # replace with ``retry_message``
 
-_DONE = {
-    states.SUCCESS: "succeeded",
-    states.FAILURE: "failed",
-    states.RETRY: "will be retried",
-    states.IGNORED: "was ignored",
-    states.REJECTED: "was rejected",
-    states.REVOKED: "was revoked",
-}
 REQUEUE = "requeue"  # give back unchanged
 DEAD_LETTER = "dead_letter"  # park for humans
 
@@ -82,6 +74,7 @@ class Outcome:
     traceback: str | None = None
     runtime: float = 0.0
     reason: str | None = None
+    retry: Retry | None = None  # the Retry raised, for eager mode
 
 
 class ExceptionInfo:
@@ -223,11 +216,62 @@ def _fail_signature(
     return followups
 
 
+def duration(seconds: float) -> str:
+    """``850µs``, ``12ms``, ``1.25s``, ``4m05s``, ``2h03m``."""
+    if seconds < 0.001:
+        return f"{seconds * 1_000_000:.0f}µs"
+    if seconds < 1:
+        return f"{seconds * 1000:.0f}ms"
+    if seconds < 60:
+        return f"{seconds:.2f}s" if seconds < 10 else f"{seconds:.1f}s"
+    minutes, secs = divmod(int(seconds), 60)
+    if minutes < 60:
+        return f"{minutes}m{secs:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h{minutes:02d}m"
+
+
 def log_done(message: Message, outcome: Outcome) -> None:
-    """One line per finished attempt: ``Task name[id] succeeded (ran 0.012s)``."""
-    level = logging.INFO if outcome.state in (states.SUCCESS, states.RETRY, states.IGNORED) else logging.WARNING
-    done = _DONE.get(outcome.state, outcome.state.lower())
-    logger.log(level, "Task %s[%s] %s (ran %.3fs)", message.task, message.id, done, outcome.runtime)
+    """One line per finished attempt, e.g. ``Task shop.charge[1f2e…] succeeded in 12ms``.
+
+    The record carries ``potatoq_event`` (the state), ``task_name``, ``task_id`` and
+    ``runtime`` for formatters and log processors."""
+    state = outcome.state
+    took = duration(outcome.runtime)
+    task = f"{message.task}[{message.id}]"
+    extra = {
+        "potatoq_event": state.lower(),
+        "task_name": message.task,
+        "task_id": message.id,
+        "runtime": outcome.runtime,
+    }
+    exc = outcome.exc
+    if state == states.SUCCESS:
+        logger.info("Task %s succeeded in %s", task, took, extra=extra)
+    elif state == states.RETRY:
+        when = outcome.retry.humanize() if outcome.retry is not None else "later"
+        logger.info("Task %s failed in %s, will retry %s: %r", task, took, when, exc, extra=extra)
+    elif state == states.FAILURE:
+        dead = " and was dead-lettered" if outcome.action == DEAD_LETTER else ""
+        exc_info = None
+        if isinstance(exc, NotRegistered):
+            what = "it isn't registered in this worker (is its module imported?)"
+        elif isinstance(exc, MaxRetriesExceededError):
+            what = "max retries exceeded"
+        elif exc is not None:
+            what = repr(exc)
+            if exc.__traceback__ is not None:
+                exc_info = (type(exc), exc, exc.__traceback__)
+        else:
+            what = (outcome.reason or "unknown error").strip().splitlines()[-1]
+        logger.error("Task %s failed in %s%s: %s", task, took, dead, what, exc_info=exc_info, extra=extra)
+    else:
+        verb = {states.IGNORED: "ignored", states.REVOKED: "revoked", states.REJECTED: "rejected"}.get(
+            state, state.lower()
+        )
+        reason = f": {outcome.reason}" if outcome.reason else ""
+        level = logging.WARNING if state == states.REJECTED else logging.INFO
+        logger.log(level, "Task %s %s%s", task, verb, reason, extra=extra)
 
 
 def execute(
@@ -245,7 +289,6 @@ def execute(
     request = build_request(message, delivery_count, hostname, is_eager, limits)
 
     if message.is_expired():
-        logger.info("Task %s[%s] expired; discarding", message.task, message.id)
         signals.task_revoked.send(sender=task, request=request, terminated=False, signum=None, expired=True)
         rec = _record(message, states.REVOKED, None, request)
         return Outcome(COMPLETE, states.REVOKED, record=rec, reason="expired")
@@ -263,7 +306,6 @@ def execute(
     if previous is not None and previous.ready and delivery_count > 1:
         # Redelivered after a crash, but the previous attempt got as far as storing a
         # final result: don't run the task again.
-        logger.info("Task %s[%s] already finished (%s); skipping redelivery", message.task, message.id, previous.state)
         # The previous attempt may have died between storing the result and enqueueing
         # its callbacks: rebuild them (their ids are fixed, so brokers dedupe repeats).
         if previous.state == states.FAILURE:
@@ -284,7 +326,6 @@ def execute(
 
     if task is None:
         exc = NotRegistered(message.task)
-        logger.error("Received unregistered task %r (id %s); dead-lettering it", message.task, message.id)
         signals.task_unknown.send(sender=None, name=message.task, id=message.id, message=message, exc=exc)
         record = None
         if backend is not None and not message.ignore_result:
@@ -419,24 +460,15 @@ def _on_retry(app: Potatoq, task: Task, message: Message, request: Context, exc:
         if store
         else None
     )
-    logger.info("Task %s[%s] retry %s: %s", message.task, message.id, exc.humanize(), cause)
-    return Outcome(RETRY, states.RETRY, record=record, retry_message=new, exc=cause, traceback=einfo.traceback)
+    return Outcome(
+        RETRY, states.RETRY, record=record, retry_message=new, exc=cause, traceback=einfo.traceback, retry=exc
+    )
 
 
 def _on_failure(
     app: Potatoq, task: Task, message: Message, request: Context, exc: BaseException, store: bool
 ) -> Outcome:
-    einfo = ExceptionInfo(exc)
-    if isinstance(exc, MaxRetriesExceededError):
-        logger.error("Task %s[%s] max retries exceeded", message.task, message.id)
-    else:
-        logger.error(
-            "Task %s[%s] raised unexpected: %r",
-            message.task,
-            message.id,
-            exc,
-            exc_info=(type(exc), exc, exc.__traceback__),
-        )
+    einfo = ExceptionInfo(exc)  # logged with the outcome (log_done)
     store = store or (app.backend is not None and task.store_errors_even_if_ignored)
     record = (
         _record(message, states.FAILURE, serialization.exception_to_dict(exc), request, einfo.traceback)
@@ -524,13 +556,19 @@ def settle(app: Potatoq, consumer: Any, delivery: Any, outcome: Outcome) -> None
 def execute_eagerly(
     app: Potatoq, message: Message, throw: bool = True, _results: dict[str, EagerResult] | None = None
 ) -> EagerResult:
-    """``task.apply()``: run now, in this process, following retries and callbacks."""
+    """``task.apply()``: run now, in this process, following retries and callbacks.
+
+    Like Celery, with ``throw`` (``task_eager_propagates``) a retry raises ``Retry``
+    at once; without it, the retries run here until the task's final outcome."""
     from ..result import EagerResult
 
     results: dict[str, EagerResult] = {} if _results is None else _results
     while True:
         outcome = execute(app, message, is_eager=True, hostname="eager")
+        log_done(message, outcome)
         if outcome.action == RETRY and outcome.retry_message is not None:
+            if throw and outcome.retry is not None:
+                raise outcome.retry
             message = outcome.retry_message
             message.eta = None
             continue

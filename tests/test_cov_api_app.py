@@ -64,6 +64,53 @@ def test_task_cls_as_import_path():
     assert app.Task is CustomTask
 
 
+def test_task_cls_string_is_imported_lazily(monkeypatch):
+    """Like Celery: under Django the base class may import models, which isn't possible
+    while celery.py is being imported."""
+    loads = []
+    real = app_module.load_object
+    monkeypatch.setattr(app_module, "load_object", lambda path: loads.append(path) or real(path))
+    app = Potatoq("lazy", broker="memory://", task_cls=f"{__name__}:CustomTask", set_as_current=False)
+    assert loads == []
+    assert app.Task is CustomTask and app.Task is CustomTask
+    assert loads == [f"{__name__}:CustomTask"]  # once
+
+
+def test_tasks_have_celerys_exception_aliases(memory_app):
+    from potatoq.exceptions import MaxRetriesExceededError, OperationalError
+
+    @memory_app.task
+    def t():
+        pass
+
+    assert t.MaxRetriesExceededError is MaxRetriesExceededError
+    assert t.OperationalError is OperationalError
+
+
+def test_publish_failures_raise_a_broker_neutral_operational_error(memory_app, monkeypatch):
+    from potatoq.exceptions import OperationalError
+
+    @memory_app.task(name="cov.unsent")
+    def unsent():
+        pass
+
+    def down(messages, connection=None):
+        raise ConnectionRefusedError("connection refused")
+
+    monkeypatch.setattr(memory_app.broker, "enqueue", down)
+    monkeypatch.setattr(app_module.time, "sleep", lambda s: None)
+    with pytest.raises(OperationalError, match=r"Couldn't send cov.unsent to memory://: connection refused") as info:
+        unsent.delay()
+    assert isinstance(info.value.__cause__, ConnectionRefusedError)
+
+    def bug(messages, connection=None):
+        raise ValueError("not a broker outage")
+
+    monkeypatch.setattr(memory_app.broker, "enqueue", bug)
+    with pytest.raises(ValueError):  # other errors aren't disguised
+        unsent.delay()
+
+
 def test_set_current_and_default():
     previous_current, previous_default = app_module._current_app, app_module._default_app
     try:
@@ -619,3 +666,42 @@ def test_apply_does_not_touch_the_broker(tmp_path):
 
     assert add.apply((2, 3)).get() == 5
     assert app._broker is None and app._backend is False
+
+
+def test_publish_retries_a_broker_blip(memory_app, monkeypatch):
+    @memory_app.task(name="cov.blip")
+    def blip():
+        pass
+
+    sleeps = []
+    monkeypatch.setattr(app_module.time, "sleep", sleeps.append)
+    real = memory_app.broker.enqueue
+    failures = [ConnectionRefusedError("restarting"), ConnectionResetError("failover")]
+
+    def flaky(messages, connection=None):
+        if failures:
+            raise failures.pop(0)
+        return real(messages, connection=connection)
+
+    monkeypatch.setattr(memory_app.broker, "enqueue", flaky)
+    blip.delay()
+    assert sleeps == [0.1, 0.25]
+    assert memory_app.broker.queue_sizes() == {"default": 1}
+
+
+def test_publish_after_commit_failure_says_the_data_committed(memory_app, monkeypatch, caplog):
+    from potatoq.exceptions import EnqueueAfterCommitError
+    from potatoq.message import Message
+
+    monkeypatch.setattr(app_module.time, "sleep", lambda s: None)
+
+    def down(messages, connection=None):
+        raise ConnectionRefusedError("broker down")
+
+    monkeypatch.setattr(memory_app.broker, "enqueue", down)
+    messages = [Message(task="cov.a", id="1"), Message(task="cov.b", id="2")]
+    with pytest.raises(EnqueueAfterCommitError, match=r"committed, but 2 task\(s\) couldn't be sent") as info:
+        memory_app.publish_after_commit(messages)
+    assert info.value.task_ids == ["1", "2"]
+    assert isinstance(info.value.__cause__, ConnectionRefusedError)
+    assert caplog.text.count("Lost task") == 2 and "cov.b[2] (queue default)" in caplog.text

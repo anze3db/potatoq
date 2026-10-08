@@ -74,7 +74,12 @@ class Message:
 
     @classmethod
     def decode(cls, data: str | bytes) -> Message:
-        return cls.from_dict(serialization.loads(data))
+        decoded = serialization.loads(data)
+        if not isinstance(decoded, dict) or "task" not in decoded or "id" not in decoded:
+            # Without an id, every redelivery would get a new one, so "already finished"
+            # and revocation checks couldn't recognise it.
+            raise ValueError(_not_ours(decoded))
+        return cls.from_dict(decoded)
 
     @property
     def delay(self) -> float:
@@ -104,3 +109,17 @@ def _field_defaults() -> dict[str, Any]:
 
 
 _DEFAULTS = _field_defaults()
+
+
+def _not_ours(data: Any) -> str:
+    """Why a message on a potatoq queue can't be run, in words a person can act on."""
+    if isinstance(data, list) and len(data) == 3 and isinstance(data[2], dict):
+        return (
+            "This is a Celery (protocol 2) message, not a potatoq one. potatoq has its own "
+            "message format: send it with potatoq, or see the message format docs for other languages."
+        )
+    if isinstance(data, dict) and "body" in data and "headers" in data:
+        return "This is a Celery/kombu message envelope, not a potatoq message. See the message format docs."
+    if isinstance(data, dict) and "task" in data:
+        return "Not a potatoq message: it has no 'id'. Producers must set a unique id (e.g. a UUID)."
+    return f"Not a potatoq message: expected a JSON object with 'task' and 'id' fields, got {type(data).__name__}."

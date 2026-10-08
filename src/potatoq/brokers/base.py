@@ -156,6 +156,9 @@ class Broker:
     supports_results: bool = True
     #: Whether tasks can be enqueued inside the caller's database transaction.
     transactional: bool = False
+    #: Exceptions that mean "the broker is unavailable"; publishing wraps them in
+    #: :class:`~potatoq.exceptions.OperationalError`.
+    connection_errors: tuple[type[BaseException], ...] = (OSError,)
     #: Queued messages can't be deleted, so revocations are checked at run time.
     needs_revoke_check: bool = False
     #: ``enqueue_periodic`` claims outlive a worker restart, so a starting scheduler can
@@ -190,6 +193,11 @@ class Broker:
         """Enqueue ``message`` unless ``(name, fire_at)`` was already enqueued by any
         scheduler. This is what makes it safe to run the scheduler on every worker."""
         raise NotImplementedError
+
+    def last_periodic_runs(self) -> dict[str, float]:
+        """The latest fire time each periodic entry was sent for (epoch seconds), as far
+        as the broker remembers (claims are kept for a week, a day on Redis)."""
+        return {}
 
     # --- results ------------------------------------------------------------------
 
