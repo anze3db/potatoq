@@ -11,22 +11,22 @@
 > potatoq was generated with **Claude Opus 5.5** (high effort): the research, design,
 > code, tests and docs.
 
-Switching from Celery is meant to be a find-and-replace: the same decorators, the same
-`delay()`/`apply_async()`, the same `chain`/`group`/`chord`, the same settings names.
-What changes is everything you used to have to know to run Celery safely in production.
-The defaults now come from years of community post-mortems, the Ruby job-queue world
-(Sidekiq, Solid Queue, GoodJob), and the best Python alternatives (Dramatiq, RQ, arq,
-Procrastinate, Oban/River designs). Each backend is implemented with its own native
-primitives instead of a lowest-common-denominator abstraction.
-
-- **Free-threaded Python** (3.14t, 3.15t): tested in CI, and potatoq never turns the
+- 🧵 **Free-threaded Python** (3.14t, 3.15t): tested in CI, and potatoq never turns the
   GIL back on, so `--threads` runs CPU-bound tasks in parallel in one process: 3.4×
   with 4 threads, in half the memory of 4 processes ([numbers](#free-threaded-python)).
-- **Django tasks**: a backend for Django 6's built-in
+- 🎸 **Django tasks**: a backend for Django 6's built-in
   [`django.tasks`](docs/integrations/django-tasks.md), sharing workers with
   `@shared_task`. The classic setup works too: add `"potatoq.contrib.django"` to
   `INSTALLED_APPS` (no `celery.py` needed), and `.delay()` inside `atomic()` is sent on
   commit.
+- 🔁 **Switching from Celery** is meant to be a find-and-replace: the same decorators,
+  the same `delay()`/`apply_async()`, the same `chain`/`group`/`chord`, the same
+  settings names. What changes is everything you used to have to know to run Celery
+  safely in production. The defaults come from years of community post-mortems, the
+  Ruby job-queue world (Sidekiq, Solid Queue, GoodJob), and the best Python
+  alternatives (Dramatiq, RQ, arq, Procrastinate, Oban/River designs). Each backend is
+  implemented with its own native primitives instead of a lowest-common-denominator
+  abstraction.
 
 ```python
 from potatoq import Potatoq  # or: from potatoq import Celery
