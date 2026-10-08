@@ -98,7 +98,8 @@ class Potatoq:
     ):
         self.main = main
         self.conf = Settings()
-        self.tasks = TaskRegistry()
+        self._tasks = TaskRegistry()
+        self.autofinalize = autofinalize
         self._lock = threading.RLock()
         self._broker: Broker | None = None
         #: Set by the Django integration when the broker is a Django database.
@@ -279,6 +280,14 @@ class Potatoq:
         def accumulate(*args: Any, **kwargs: Any) -> Any:
             index = kwargs.get("index")
             return args[index] if index is not None else args
+
+    @property
+    def tasks(self) -> TaskRegistry:
+        """Registered tasks. As in Celery, reading it finalizes the app, which registers
+        every ``@shared_task`` defined so far (unless ``autofinalize=False``)."""
+        if not self._finalized and self.autofinalize:
+            self.finalize(auto=True)
+        return self._tasks
 
     def finalize(self, auto: bool = False) -> None:
         with self._lock:

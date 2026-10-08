@@ -200,6 +200,10 @@ def test_management_command_run_from_argv(django_env, capsys):
     assert exc.value.code == 0
     assert capsys.readouterr().out
 
+    with pytest.raises(SystemExit):
+        ManagementUtility(["manage.py", "potatoq", "--help"]).execute()
+    assert capsys.readouterr().out.startswith("usage: manage.py potatoq")
+
 
 # --- django.tasks backend -------------------------------------------------------------
 

@@ -250,7 +250,8 @@ def execute(
         rec = _record(message, states.REVOKED, None, request)
         return Outcome(COMPLETE, states.REVOKED, record=rec, reason="expired")
 
-    backend = app.backend
+    # Eager calls (task.apply()) don't touch the broker unless asked to store results.
+    backend = app.backend if not is_eager or app.conf.task_store_eager_result else None
     previous = None
     if backend is not None and (delivery_count > 1 or app.broker.needs_revoke_check):
         previous = backend.get_result(message.id)

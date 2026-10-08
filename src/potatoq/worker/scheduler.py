@@ -55,6 +55,20 @@ def load_entries(app: Potatoq) -> list[Entry]:
     return entries
 
 
+def describe(app: Potatoq, entries: list[Entry], now: datetime | None = None) -> list[tuple[Entry, str]]:
+    """Each entry with its next fire time in the app's timezone, e.g. ``2026-10-09 10:00 America/Chicago``."""
+    now = now or datetime.now(UTC)
+    tz = ZoneInfo(app.conf.timezone) if app.conf.timezone else UTC
+    out = []
+    for entry in entries:
+        try:
+            when = entry.schedule.next_after(now).astimezone(tz).strftime("%Y-%m-%d %H:%M:%S")
+            out.append((entry, f"{when} {app.conf.timezone or 'UTC'}"))
+        except Exception as exc:
+            out.append((entry, f"unknown ({exc})"))
+    return out
+
+
 class Scheduler:
     #: Fire times missed by more than this (e.g. all workers were down) are skipped
     #: rather than replayed in a burst.
@@ -74,8 +88,14 @@ class Scheduler:
 
     def start(self) -> None:
         signals.beat_init.send(sender=self)
-        for entry in self.entries:
-            logger.info("Scheduler: %s -> %s (%r)", entry.name, entry.task, entry.schedule)
+        for entry, next_run in describe(self.app, self.entries):
+            logger.info("Scheduler: %s -> %s (%r), next run %s", entry.name, entry.task, entry.schedule, next_run)
+            if entry.task not in self.app.tasks:
+                logger.warning(
+                    "Scheduler: %s runs %r, which isn't registered in this worker. If that's a typo, "
+                    "every run will be dead-lettered.",
+                    entry.name, entry.task,
+                )  # fmt: skip
 
     def tick(self, now: datetime | None = None) -> int:
         """Enqueue everything due since the last tick. Returns the number enqueued."""

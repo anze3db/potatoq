@@ -196,7 +196,8 @@ def test_banner_warns_without_result_backend_on_foreign_settling_brokers(app, su
     assert "concurrency=8 (2 processes x 4 threads)" in text
     assert "requeues the other 3 task(s)" in text
     assert "No result backend" in text
-    assert "Registered tasks: cov.boom, cov.errback" in text
+    registered = next(line for line in text.splitlines() if "Registered tasks: " in line)
+    assert "cov.boom, cov.errback" in registered  # plus @shared_tasks other tests defined
 
 
 def test_banner_says_when_results_are_off_by_default(app, sup, caplog):

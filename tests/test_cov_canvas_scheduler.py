@@ -48,7 +48,27 @@ def test_start_sends_beat_init_and_logs_entries(memory_app, caplog):
     finally:
         signals.beat_init.disconnect(on_init)
     assert seen == [scheduler]
-    assert "Scheduler: r -> some.task" in caplog.text
+    assert "Scheduler: r -> some.task (" in caplog.text
+    assert ", next run 20" in caplog.text and " UTC" in caplog.text
+    assert "runs 'some.task', which isn't registered in this worker" in caplog.text
+
+
+def test_describe_shows_next_runs_in_the_app_timezone(memory_app):
+    from potatoq.worker.scheduler import describe, load_entries
+
+    class Broken(BaseSchedule):
+        def next_after(self, after):
+            raise RuntimeError("broken schedule")
+
+    memory_app.conf.timezone = "America/Chicago"
+    memory_app.conf.beat_schedule = {
+        "daily": {"task": "t", "schedule": crontab(hour=10, minute=0)},
+        "bad": {"task": "t", "schedule": Broken()},
+    }
+    (daily, when), (_, bad) = describe(memory_app, load_entries(memory_app), now=START)
+    assert daily.name == "daily"
+    assert when.endswith(" 10:00:00 America/Chicago")
+    assert bad == "unknown (broken schedule)"
 
 
 def test_bad_schedule_is_logged_and_others_still_run(memory_app, caplog):

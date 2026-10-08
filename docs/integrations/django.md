@@ -17,7 +17,9 @@ That's the whole setup:
 - **`.delay()` in `atomic()` is sent on commit** ([details](../guide/transactions.md)).
 - **Worker processes close stale database connections** around every task, and never
   reuse connections inherited from the parent process.
-- `TIME_ZONE` is used for crontab schedules.
+- `TIME_ZONE` is used for crontab schedules. If your settings don't set it, Django's
+  default is `America/Chicago`, not UTC; `potatoq schedule` shows each next run with
+  its timezone.
 
 ```python title="shop/tasks.py"
 from potatoq import shared_task

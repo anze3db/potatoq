@@ -591,3 +591,31 @@ def test_shared_task_registers_on_already_finalized_apps(memory_app):
         return "late"
 
     assert f"{__name__}.late" in memory_app.tasks
+
+
+def test_reading_tasks_finalizes_like_celery(monkeypatch):
+    monkeypatch.setattr(app_module, "_shared_tasks", list(app_module._shared_tasks))  # don't leak
+
+    @shared_task(name="cov.autofinal")
+    def autofinal():
+        pass
+
+    app = Potatoq("auto", broker="memory://", set_as_current=False)
+    assert "cov.autofinal" in app.tasks  # no explicit finalize() needed
+    lazy = Potatoq("lazy", broker="memory://", set_as_current=False, autofinalize=False)
+    assert "cov.autofinal" not in lazy.tasks
+    lazy.finalize()
+    assert "cov.autofinal" in lazy.tasks
+
+
+def test_apply_does_not_touch_the_broker(tmp_path):
+    """task.apply() runs in-process like Celery's: no broker connection, no tables,
+    unless task_store_eager_result asks for the result to be stored."""
+    app = Potatoq("eager", broker=f"sqlite:///{tmp_path}/missing/dir/queue.db", set_as_current=False)
+
+    @app.task
+    def add(x, y):
+        return x + y
+
+    assert add.apply((2, 3)).get() == 5
+    assert app._broker is None and app._backend is False

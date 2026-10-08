@@ -76,8 +76,8 @@ def _import_app(spec: str) -> Potatoq:
     raise SystemExit(f"Could not find a Potatoq app in {spec!r}. Pass -A module:attribute.")
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="potatoq", description="Potatoq task queue")
+def build_parser(prog: str = "potatoq") -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=prog, description="Potatoq task queue")
     parser.add_argument("-A", "--app", help="Application, e.g. proj or proj.celery:app")
     parser.add_argument("-b", "--broker", help="Broker URL (overrides configuration)")
     parser.add_argument("--result-backend", help="Result backend URL")
@@ -153,6 +153,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("task_id")
     r.add_argument("--wait", type=float, default=None, help="Seconds to wait for it")
 
+    sub.add_parser("schedule", help="List periodic tasks and when they run next")
     i = sub.add_parser("inspect", help="Inspect live workers: active, registered, stats, ping, active_queues")
     i.add_argument("what", choices=["active", "registered", "stats", "ping", "active_queues", "scheduled", "reserved"])
     i.add_argument("-d", "--destination")
@@ -164,13 +165,13 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[Any] | None = None) -> int:
+def main(argv: list[Any] | None = None, prog: str = "potatoq") -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     app_obj = None
     if len(argv) >= 2 and argv[0] in ("-A", "--app") and isinstance(argv[1], Potatoq):
         app_obj = argv[1]
         argv = argv[2:]
-    args = build_parser().parse_args([str(a) for a in argv])
+    args = build_parser(prog).parse_args([str(a) for a in argv])
     if args.workdir:
         os.chdir(args.workdir)
     app = app_obj or find_app(args.app)
@@ -274,8 +275,17 @@ def run_solo(app: Potatoq, args: argparse.Namespace) -> int:
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
     logger.info("potatoq solo worker %s consuming %s", hostname, ",".join(queues))
+    scheduler = None
+    if not args.no_scheduler:
+        from .worker.scheduler import Scheduler
+
+        scheduler = Scheduler(app) or None
+        if scheduler:
+            scheduler.start()
     last_beat = 0.0
     while not stop["flag"]:
+        if scheduler is not None:
+            scheduler.tick()  # between tasks: a long task delays sends (60 s catch-up)
         if time.monotonic() - last_beat > app.conf.worker_heartbeat_interval:
             app.broker.heartbeat(
                 node_id, {"hostname": hostname, "pid": os.getpid(), "queues": queues, "concurrency": 1}
@@ -314,6 +324,19 @@ def cmd_beat(app: Potatoq, args: argparse.Namespace) -> int:
 def _print(data: Any, as_json: bool) -> None:
     if as_json:
         print(json.dumps(data, indent=2, default=str))
+
+
+def cmd_schedule(app: Potatoq, args: argparse.Namespace) -> int:
+    from .worker.scheduler import describe, load_entries
+
+    app.loader_import_default_modules()
+    entries = describe(app, load_entries(app))
+    if not entries:
+        print("No periodic tasks (beat_schedule is empty)")
+        return 0
+    for entry, next_run in entries:
+        print(f"{entry.name}: {entry.task} {entry.schedule!r} next={next_run}")
+    return 0
 
 
 def cmd_status(app: Potatoq, args: argparse.Namespace) -> int:

@@ -281,7 +281,11 @@ def test_run_solo_executes_tasks_until_stopped(app, monkeypatch):
         return inner
 
     monkeypatch.setattr(app.broker, "consumer", consumer)
+    app.conf.beat_schedule = {"every-second": {"task": add.name, "schedule": 1.0, "args": (1, 1)}}
+    ticks = []
+    monkeypatch.setattr("potatoq.worker.scheduler.Scheduler.tick", lambda self: ticks.append(self))
     assert run(app, "worker", "-P", "solo", "-n", "solo-test") == 0
+    assert ticks  # solo workers run the scheduler too
     assert result.get(timeout=1) == 5
     assert set(handlers) == {signal.SIGTERM, signal.SIGINT}
     assert [(w["hostname"], w["concurrency"]) for w in seen_workers] == [("solo-test", 1)]
@@ -540,3 +544,12 @@ def test_hostname_placeholders_like_celery(monkeypatch):
     assert cli.expand_hostname("w1@%h") == "w1@web-1.example.com"
     assert cli.expand_hostname("%n-worker@%d") == "web-1-worker@example.com"
     assert cli.expand_hostname("100%%@%n") == "100%@web-1"
+
+
+def test_schedule_lists_entries_with_next_run(app, capsys):
+    assert run(app, "schedule") == 0
+    assert capsys.readouterr().out == "No periodic tasks (beat_schedule is empty)\n"
+    app.conf.beat_schedule = {"ping": {"task": "cli.ping", "schedule": 30.0}}
+    assert run(app, "schedule") == 0
+    out = capsys.readouterr().out
+    assert out.startswith("ping: cli.ping ") and " next=20" in out and out.rstrip().endswith(" UTC")

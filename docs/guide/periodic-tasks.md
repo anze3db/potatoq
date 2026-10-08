@@ -25,6 +25,17 @@ def setup_periodic_tasks(sender, **kwargs):
     sender.add_periodic_task(10.0, ping.s(), name="ping every 10s")
 ```
 
+Check what will run, and when:
+
+```console
+$ potatoq -A proj schedule
+nightly-report: reports.build <crontab: 0 3 * * * (m/h/dM/MY/d)> next=2026-10-09 03:00:00 Europe/Ljubljana
+ping: monitoring.ping <schedule: every 30s> next=2026-10-08 16:41:30 Europe/Ljubljana
+```
+
+Workers log the same list when they start, and warn about entries whose task isn't
+registered, so a typo shows up at deploy time rather than as a dead letter at fire time.
+
 ## No beat process
 
 **Every worker runs the scheduler.** Fire times are deterministic (interval schedules
@@ -40,7 +51,8 @@ claimed exactly once through the broker:
 So you can't end up with zero schedulers (periodic jobs silently stop) or two (everything
 runs twice), the classic `celery beat` failure modes. (RabbitMQ has a short exception
 during leader failover, see [below](#rabbitmq-leader-failover).) Use `potatoq worker --no-scheduler`
-on workers that shouldn't schedule, or `potatoq beat` for a dedicated process.
+on workers that shouldn't schedule, or `potatoq beat` for a dedicated process. `-P solo`
+workers schedule too, between tasks.
 
 ## Missed runs
 
