@@ -7,10 +7,6 @@
 
 **A Celery-compatible task queue with production-ready defaults.**
 
-> [!NOTE]
-> potatoq was generated with **Claude Opus 5.5** (high effort): the research, design,
-> code, tests and docs.
-
 - 🧵 **Free-threaded Python** (3.14t, 3.15t): tested in CI, and potatoq never turns the
   GIL back on, so `--threads` runs CPU-bound tasks in parallel in one process: 3.4×
   with 4 threads, in half the memory of 4 processes ([numbers](#free-threaded-python)).
@@ -306,3 +302,7 @@ trusted publishing to PyPI, and a GitHub release with generated notes.
 ## License
 
 MIT
+
+> [!NOTE]
+> potatoq was generated with **Claude Opus 5.5** (high effort): the research, design,
+> code, tests and docs.
