@@ -4,7 +4,8 @@ potatoq needs Python 3.11 or newer. 3.11 – 3.15 are tested, including the free
 
 !!! warning "Alpha"
     potatoq is alpha software in limited production use: use it in production at your
-    own risk for now. APIs and defaults may still change between releases.
+    own risk for now. APIs and defaults may still change between releases. Please
+    [report bugs on GitHub](https://github.com/anze3db/potatoq/issues).
 
     Releases are currently PEP 440 pre-releases (such as `26.1a1`). `uv add potatoq` and
     `pip install potatoq` install them while no final release exists. Once one does,

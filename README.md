@@ -3,7 +3,7 @@
 > [!WARNING]
 > **potatoq is alpha software** in limited production use. Use it in
 > production **at your own risk** for now. APIs and defaults may still change between
-> releases, and bug reports are very welcome.
+> releases. Please [report bugs on GitHub](https://github.com/anze3db/potatoq/issues).
 
 **A Celery-compatible task queue with production-ready defaults.**
 

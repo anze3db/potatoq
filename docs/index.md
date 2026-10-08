@@ -33,7 +33,8 @@ hide:
 
 !!! warning "Alpha software"
     potatoq is alpha software in limited production use. Use it in production at your
-    own risk for now; APIs and defaults may still change between releases.
+    own risk for now; APIs and defaults may still change between releases. Please
+    [report bugs on GitHub](https://github.com/anze3db/potatoq/issues).
 
 ```python
 from potatoq import Potatoq          # or: from potatoq import Celery
