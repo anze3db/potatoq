@@ -25,6 +25,17 @@ Behaviour that's accepted for compatibility but not implemented yet.
 - [ ] **Windows.** Workers need `fork()` and POSIX signals. A spawn-based worker would
   be needed; WSL works today.
 - [ ] **`solar` schedules** (sunrise/sunset), from Celery.
+- [ ] **Catch up missed periodic runs.** A run due while every worker is down is skipped
+  once it's 60 s late, because the scheduler starts fresh on restart. A daily job is
+  lost if the only worker restarts around its fire time, where Celery's `beat` would
+  send it once on restart. On RabbitMQ, leader failover (about 1 s, or about 60 s when a
+  host is lost) also skips runs due in that window, and can send one twice.
+  Plan: on start and on each tick, send the latest fire time if the next one isn't due
+  yet. The broker already claims each fire time once, so this is safe to repeat. That
+  needs claim records kept for at least one schedule interval (Redis keys expire after
+  7 days today, so monthly jobs would re-run), and RabbitMQ's record of sent runs moved
+  from the leader's memory into the result backend. Also set a shorter heartbeat
+  (about 10 s) on the RabbitMQ leader connection to cut host-loss failover.
 
 ## Monitoring and operations
 
@@ -63,8 +74,6 @@ What people get from Flower and friends today.
 - [ ] **Batches with callbacks** for large fan-outs, with progress (Sidekiq batches).
   Chords cover the basic case.
 - [ ] **Pause and resume queues** at runtime.
-- [ ] **Catch-up window for missed periodic runs**: run missed fire times once a worker
-  is back, opt-in per entry.
 - [ ] **Weighted queue consumption** (`-Q critical:3,default:1`) in addition to fair
   rotation.
 

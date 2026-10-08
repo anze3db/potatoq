@@ -175,7 +175,13 @@ optimized for 4.3.
   redelivers it until the delivery limit, and the worker warns about this at startup.
 * **Periodic tasks**: a single-active-consumer quorum queue holds a "token" message that
   is never acked. Whoever holds it runs the scheduler, and if that process dies the token
-  moves to the next consumer. No external lock is needed.
+  moves to the next consumer. No external lock is needed. Each worker polls its token
+  consumer about once a second. RabbitMQ requeues the token as soon as the leader's
+  connection closes, so failover takes about 1 s after a clean shutdown or a process
+  crash, and about 60 s after a lost host (the default heartbeat timeout, which potatoq
+  doesn't override). Which fire times were sent is kept in the leader's memory, so
+  runs due during failover are skipped, and a leader that hasn't yet noticed it lost its
+  connection can send a run the new leader also sends.
 
 ## Rust
 

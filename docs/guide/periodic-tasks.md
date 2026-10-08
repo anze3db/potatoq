@@ -38,16 +38,39 @@ claimed exactly once through the broker:
 | RabbitMQ | a single-active-consumer token queue elects one scheduler |
 
 So you can't end up with zero schedulers (periodic jobs silently stop) or two (everything
-runs twice), the classic `celery beat` failure modes. Use `potatoq worker --no-scheduler`
+runs twice), the classic `celery beat` failure modes. (RabbitMQ has a short exception
+during leader failover, see [below](#rabbitmq-leader-failover).) Use `potatoq worker --no-scheduler`
 on workers that shouldn't schedule, or `potatoq beat` for a dedicated process.
 
 ## Missed runs
 
-- If no worker was up when a run was due, it is skipped once it is more than 60 s late:
-  no stampede of the same job after downtime.
+- **Runs are only sent while a worker is up.** A run that's due while every worker is
+  down is skipped once it is more than 60 s late, and the scheduler keeps no state across
+  restarts. For example, with a single worker restarting from 11:55 to 12:05, a daily
+  12:00 job doesn't run that day. Run two or more workers and restart them one at a time,
+  so one is always scheduling. Catching up after downtime is on the
+  [wishlist](../wishlist.md#known-gaps).
 - Each run expires when the next one is due, so a stuck queue doesn't pile up copies.
   Set `"options": {"expires": None}` to keep them.
-- A run that couldn't be enqueued because of a broker hiccup is retried on the next tick.
+- A run that couldn't be enqueued because of a broker hiccup is retried on the next tick,
+  as long as it's less than 60 s late.
+
+### RabbitMQ leader failover
+
+On RabbitMQ only the leader, the worker holding the token, sends periodic runs. When it
+goes away, RabbitMQ hands the token to the next worker once it notices the connection is
+gone:
+
+| How the leader stops | Failover takes about |
+|---|---|
+| Clean shutdown, or the process crashes while the host stays up | 1 s |
+| The host dies, or the network is partitioned | 60 s (RabbitMQ's default heartbeat timeout) |
+
+Runs due during failover are skipped: the other workers don't send them, and the new
+leader doesn't know what the old one already sent. In the slow case, the old leader can
+also keep sending until it notices it lost the connection, so a run due in that window
+can be sent twice. Redis, Postgres and SQLite claim each fire time in the broker and
+don't have these gaps.
 
 ## crontab
 

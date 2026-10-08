@@ -32,6 +32,10 @@ Requires `potatoq[rabbitmq]` and RabbitMQ 4.0 or newer (4.3 recommended).
   (Redis, Postgres or SQLite).
 - Without a result backend, a task killed for exceeding its hard time limit is
   redelivered until the delivery limit. The worker warns about this at startup.
+- Periodic tasks are sent by one elected worker. If it dies, a new one takes over within
+  about 1 s, or about 60 s if its host or network went down. Runs due in that window can
+  be skipped, or occasionally sent twice
+  ([details](../guide/periodic-tasks.md#rabbitmq-leader-failover)).
 
 ## Options
 

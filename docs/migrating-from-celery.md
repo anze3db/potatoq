@@ -60,7 +60,7 @@ existing classic queue. Pick new queue names rather than reusing Celery's.
 | Process recycling | never | every 1000 tasks | `worker_max_tasks_per_child = None` to disable. |
 | Concurrency | host CPU count | CPUs available to the container | Set `-c` explicitly if you relied on the old value. |
 | `beat` | separate process | runs in every worker, deduplicated | Stop running `celery beat`. `potatoq beat` exists if you prefer a dedicated process. |
-| Periodic runs | queue up while workers are down | expire when the next run is due; runs missed by more than 60 s are skipped | Set `options={"expires": None}` on an entry to keep the old behaviour. |
+| Periodic runs | queue up while workers are down; `beat` sends a missed run once when it restarts (if its schedule file survived) | expire when the next run is due; runs missed by more than 60 s because no worker was up are skipped, even after a restart | Set `options={"expires": None}` on an entry to keep queued runs. Run at least two workers and restart them one at a time so no run is missed. |
 | Crontab with both `day_of_month` and `day_of_week` | both must match | either matches (standard cron) | |
 | Naive `eta` datetimes | treated as UTC/local | rejected | Pass aware datetimes or use `countdown`. |
 | Root logger | hijacked | left alone | |
