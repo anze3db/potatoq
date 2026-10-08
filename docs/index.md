@@ -85,6 +85,20 @@ $ potatoq -A proj worker
     `@shared_task`, `delay`, `apply_async`, `chain`/`group`/`chord`, `beat_schedule`,
     signals and `CELERY_*` settings all keep working.
 
+-   :simple-django:{ .lg .middle } **Django-native**
+
+    ---
+
+    One entry in `INSTALLED_APPS`, no `celery.py`. Enqueue on commit, and a backend
+    for Django 6's built-in [`django.tasks`](integrations/django-tasks.md).
+
+-   :lucide-cpu:{ .lg .middle } **Ready for free-threaded Python**
+
+    ---
+
+    Tested on 3.14t and 3.15t without re-enabling the GIL: `--threads` runs CPU-bound
+    tasks in parallel in one process ([numbers](guide/workers.md#free-threaded-python)).
+
 </div>
 
 ## Defaults, side by side
@@ -93,12 +107,12 @@ $ potatoq -A proj worker
 |---|---|---|
 | Acknowledgement | before running: <span class="pq-bad">a crash loses the task</span> | <span class="pq-good">after it finishes</span> |
 | Worker process killed (OOM) | <span class="pq-bad">task lost</span> | <span class="pq-good">requeued; dead-lettered after 5 crashes</span> |
+| Serializer | JSON, but <span class="pq-bad">pickle one setting away</span> | <span class="pq-good">JSON only; models rejected at `.delay()` with a hint</span> |
 | Prefetch | 4 × concurrency | <span class="pq-good">one task per idle process</span> |
 | ETA / countdown | held in worker RAM | <span class="pq-good">stored by the broker</span> |
 | Long tasks on Redis | <span class="pq-bad">re-run every hour</span> | <span class="pq-good">leases renewed while running</span> |
 | Time limits | none | <span class="pq-good">30 min, soft 30 s earlier</span> |
 | Failed tasks | discarded | <span class="pq-good">dead-letter store, replayable</span> |
-| Task arguments | pickle is one setting away; <span class="pq-bad">stale Django models</span> | <span class="pq-good">JSON only; models rejected at `.delay()` with a hint</span> |
 | `.delay()` inside `atomic()` | sent immediately | <span class="pq-good">sent on commit</span> |
 | Scheduler | separate `beat` process | <span class="pq-good">built into every worker, deduplicated</span> |
 | `async def` tasks | unsupported | <span class="pq-good">supported</span> |

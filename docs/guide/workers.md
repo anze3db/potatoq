@@ -89,23 +89,22 @@ since an extension that doesn't declare free-threading support turns the GIL bac
 The test suite runs on 3.14t and 3.15t and checks that four CPU-bound tasks in one
 process each get nearly a full core.
 
-`benchmarks/cpu.py` runs a pure-Python CPU-bound task (about 40 ms) on Redis, and
-compares 4 processes with 1 process running 4 threads (Apple M3 Max, median of 2–4
-runs). Speedup is over a single worker process on the same interpreter:
+`benchmarks/cpu.py` runs 400 CPU-bound tasks (a pure-Python loop, about 40 ms each) on
+Redis (Apple M3 Max, median of 2 runs). Speedup is over one process on the same
+interpreter; memory is the RSS of the whole worker:
 
-| Python | 4 processes (`-c 4`) | 4 threads (`-c 1 -t 4`) |
-|---|---|---|
-| 3.14 | 4.0×, 147 MB | 1.0×, 69 MB |
-| 3.14t (free-threaded) | 3.7×, 167 MB | 2.8×, 87 MB |
-| 3.15 rc3 | 3.9×, 150 MB | 1.1×, 71 MB |
-| 3.15t rc3 (free-threaded) | 3.8×, 172 MB | 3.3×, 90 MB |
+| Python | 1 process | 4 processes (`-c 4`) | 4 threads in 1 process (`-c 1 -t 4`) |
+|---|---:|---:|---:|
+| 3.14, with the GIL | 25 tasks/s, 69 MB | 99 tasks/s (4.0×), 146 MB | 26 tasks/s (1.1×), 70 MB |
+| **3.14t, free-threaded** | 27 tasks/s, 78 MB | 107 tasks/s (4.0×), 166 MB | **91 tasks/s (3.4×), 87 MB** |
+| 3.15 rc3, with the GIL | 19 tasks/s, 70 MB | 74 tasks/s (3.9×), 151 MB | 19 tasks/s (1.0×), 72 MB |
+| **3.15t rc3, free-threaded** | 20 tasks/s, 80 MB | 79 tasks/s (4.0×), 172 MB | **67 tasks/s (3.4×), 90 MB** |
 
-With the GIL, threads don't speed up CPU-bound work at all. Without it, they get most
-of the way to processes in about half the memory (RSS of the whole worker, which
-counts pages shared after `fork()` once per process). A bare `ThreadPoolExecutor`
-running the same loop scales the same 2.8–3.3×, so the gap to processes is the
-interpreter's, not potatoq's. For CPU-bound work processes are still the fastest
-option; threads on a free-threaded build are the leaner one.
+With the GIL, threads don't speed up CPU-bound work at all. Without it, 4 threads get
+most of the way to 4 processes in about half the memory. A bare `ThreadPoolExecutor`
+running the same loop scales about as well, so the gap is the interpreter's, not
+potatoq's. For CPU-bound work processes are still the fastest option; threads on a
+free-threaded build are the leaner one.
 
 ## Shutdown
 

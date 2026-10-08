@@ -19,6 +19,15 @@ The defaults now come from years of community post-mortems, the Ruby job-queue w
 Procrastinate, Oban/River designs). Each backend is implemented with its own native
 primitives instead of a lowest-common-denominator abstraction.
 
+- **Django-native**: add one app to `INSTALLED_APPS`, no `celery.py`. `.delay()` inside
+  `atomic()` is sent on commit, and potatoq is also a backend for Django 6's built-in
+  [`django.tasks`](docs/integrations/django-tasks.md).
+- **Free-threaded Python** (3.14t, 3.15t): tested in CI, and potatoq never turns the
+  GIL back on, so `--threads` runs CPU-bound tasks in parallel in one process: 3.4×
+  with 4 threads, in half the memory of 4 processes ([numbers](#free-threaded-python)).
+- **JSON only, never pickle**: Django models and other objects are refused at `.delay()`
+  with a hint, instead of arriving stale on the worker.
+
 ```python
 from potatoq import Potatoq  # or: from potatoq import Celery
 
@@ -45,13 +54,13 @@ Every Celery deployment eventually learns these the hard way. In Potatoq they ar
 |---|---|---|
 | Acknowledgement | before the task runs (crash = lost task) | **after it finishes** (at-least-once) |
 | Worker process killed (OOM, segfault) | task acked and lost | **requeued**, dead-lettered after 5 crashes (poison-message guard) |
+| Serializer | JSON, but pickle is one setting away, and often turned on to pass Django models (which arrive stale) | **JSON only, never pickle.** Models and querysets fail at `.delay()` with a hint to pass the primary key |
 | Prefetch | 4 × concurrency (short tasks wait behind long ones) | **one task per idle process** |
 | ETA / countdown | held in worker RAM; Redis `visibility_timeout` re-runs them; RabbitMQ's 30 min timeout kills them | **stored by the broker** (sorted set, `run_at` column, TTL cascade) |
 | Long tasks on Redis | redelivered every hour (`visibility_timeout`) | **leases renewed** by the worker while the task runs |
 | Time limits | none | **30 min hard, soft 30 s earlier** |
 | Failed tasks | gone | **dead-letter store** you can list and replay (`potatoq dead list/retry`) |
 | Retries | fixed 180 s | **exponential backoff with jitter** |
-| Task arguments | pickle is one setting away and widely enabled to pass Django models, which arrive stale; eager mode skips serialization | **JSON only.** Models, querysets and other objects fail at `.delay()` with a hint to pass the primary key; eager mode serializes too |
 | Memory leaks | processes live forever | **recycled every 1000 tasks** (`max_memory_per_child="512MB"` available) |
 | Concurrency | host CPU count (over-subscribes containers) | **CPUs actually available** (affinity + cgroup quota) |
 | SIGTERM | waits forever, then Kubernetes SIGKILLs | **25 s grace, then requeue** unfinished tasks |
@@ -243,11 +252,24 @@ Getting Celery to run at all for this comparison took two workarounds:
 and disabling remote control, because RabbitMQ 4.3 rejects Celery's transient pidbox
 queues. Potatoq needed none. Redis, Postgres and SQLite numbers vary by about ±10% between runs. RabbitMQ numbers swing up to 2× with machine load, because every publish waits for the broker to confirm it.
 
-**CPU-bound tasks** (`benchmarks/cpu.py`, a pure-Python loop, speedup over one worker
-process): 4 processes give 4.0× on Python 3.14. 4 threads in one process give 1.0×
-with the GIL, and 2.8× on free-threaded 3.14t (3.3× on 3.15t rc3) in about half the
-memory. That's what a bare `ThreadPoolExecutor` gets too. Details in the
-[workers guide](docs/guide/workers.md#free-threaded-python).
+### Free-threaded Python
+
+`benchmarks/cpu.py`: 400 CPU-bound tasks (a pure-Python loop, about 40 ms each) on
+Redis, median of 2 runs. Speedup is over one process on the same interpreter; memory is
+the RSS of the whole worker (supervisor and children).
+
+| Python | 1 process | 4 processes (`-c 4`) | 4 threads in 1 process (`-c 1 -t 4`) |
+|---|---:|---:|---:|
+| 3.14, with the GIL | 25 tasks/s, 69 MB | 99 tasks/s (4.0×), 146 MB | 26 tasks/s (1.1×), 70 MB |
+| **3.14t, free-threaded** | 27 tasks/s, 78 MB | 107 tasks/s (4.0×), 166 MB | **91 tasks/s (3.4×), 87 MB** |
+| 3.15 rc3, with the GIL | 19 tasks/s, 70 MB | 74 tasks/s (3.9×), 151 MB | 19 tasks/s (1.0×), 72 MB |
+| **3.15t rc3, free-threaded** | 20 tasks/s, 80 MB | 79 tasks/s (4.0×), 172 MB | **67 tasks/s (3.4×), 90 MB** |
+
+With the GIL, threads only help I/O-bound tasks. On a free-threaded build, 4 threads
+run CPU-bound tasks 3.4× faster than one process, close to 4 processes' 4.0×, in
+about half the memory. A bare `ThreadPoolExecutor` running the same loop scales about
+as well, so the remaining gap is the interpreter's, not potatoq's
+([details](docs/guide/workers.md#free-threaded-python)).
 
 There is no Rust in the hot path, and that's deliberate. The research
 ([docs/design/internals.md#rust](docs/design/internals.md#rust)) found that per-task overhead is

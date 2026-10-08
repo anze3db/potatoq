@@ -40,7 +40,11 @@ def python(version: str, root: Path) -> str:
     venv = root / version
     subprocess.run(["uv", "venv", "--quiet", "--python", version, str(venv)], check=True)
     executable = str(venv / "bin" / "python")
-    subprocess.run(["uv", "pip", "install", "--quiet", "--python", executable, "-e", str(REPO), "redis"], check=True)
+    install = ["uv", "pip", "install", "--quiet", "--compile-bytecode", "--python", executable]
+    install += ["-e", str(REPO), "redis"]
+    subprocess.run(install, check=True)
+    # Compile up front: a worker that compiles its imports keeps that memory, skewing RSS.
+    subprocess.run([executable, "-m", "compileall", "-q", str(REPO / "src"), str(HERE)], check=True)
     return executable
 
 
