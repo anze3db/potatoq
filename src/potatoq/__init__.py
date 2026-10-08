@@ -14,13 +14,18 @@ Migrating from Celery is usually ``s/celery/potatoq/``: ``Celery`` and ``shared_
 are available under the same names.
 """
 
+from importlib import metadata as _metadata
+
 from .app import Celery, Potatoq, current_app, shared_task
 from .canvas import chain, chord, group, signature, subtask
 from .result import AsyncResult, GroupResult
 from .schedules import crontab, schedule
 from .task import Task
 
-__version__ = "0.1.0"
+try:
+    __version__ = _metadata.version("potatoq")
+except _metadata.PackageNotFoundError:  # running from a source tree without install
+    __version__ = "0+unknown"
 
 __all__ = [
     "AsyncResult",

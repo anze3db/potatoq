@@ -1,0 +1,86 @@
+# Releasing potatoq
+
+## Versioning
+
+[CalVer](https://calver.org/) `YY.N`: the Nth release of the year. `26.1` is the first
+release of 2026, `26.2` the second, `27.1` the first of 2027. There are no separate
+patch releases: a fix ships as the next number. The version lives only in
+`pyproject.toml`; `potatoq.__version__` reads it from the installed package metadata.
+
+## Day to day: PR titles and labels are the changelog
+
+Release notes are generated from merged pull requests. GitHub groups them by label
+(`.github/release.yml`) and credits the authors. So:
+
+- **Write the PR title for users**: "Retry Redis connections on failover", not "fix stuff".
+- **Label each PR** with one of `breaking`, `feature`, `bug`, `performance`,
+  `documentation` or `maintenance`. Unlabelled PRs land under "Other changes".
+  `skip-changelog` hides a PR from the notes.
+- For changes that deserve more than a title, add a line under **Unreleased** in
+  `CHANGELOG.md` in the same PR. It becomes the release's "Highlights".
+
+## Cutting a release
+
+1. **Prepare.** Run the *Prepare release* workflow (Actions → Prepare release → Run
+   workflow), or locally:
+
+   ```console
+   $ uv run scripts/release.py prepare --dry-run   # preview the changelog section
+   $ uv run scripts/release.py prepare             # open the release PR
+   ```
+
+   This computes the next version, asks GitHub to generate notes from the PRs merged
+   since the last tag, adds the full contributor list (commit authors and
+   `Co-authored-by` trailers, bots excluded), moves the **Unreleased** notes in as
+   highlights, bumps `pyproject.toml` and `uv.lock`, and opens a **"Release 26.N"** PR
+   labelled `release`.
+
+   A PR opened by the workflow doesn't trigger CI, because GitHub doesn't let
+   `GITHUB_TOKEN` trigger workflows. The PR only touches the changelog and version.
+   Run `prepare` locally if you want CI on it.
+
+2. **Review and merge the release PR.** Edit `CHANGELOG.md` in the PR if you like:
+   whatever is merged is what gets published.
+
+3. **Done.** Merging runs `.github/workflows/release.yml`:
+   1. creates the `26.N` tag on the merge commit;
+   2. builds the sdist and wheel with `uv build`, checks them with `twine check`, and
+      verifies that the wheel reports the right version;
+   3. publishes to PyPI with **trusted publishing** (no API tokens). `pypa/gh-action-pypi-publish`
+      also uploads **PEP 740 attestations**, so anyone can verify that the files were
+      built by this workflow from this repository;
+   4. creates the **GitHub release** `26.N`, with the `CHANGELOG.md` section as its
+      body (PR titles by category, new contributors, everyone who contributed) and the
+      dists attached.
+
+   If a step fails (say PyPI is down), re-run the workflow from the Actions tab
+   (*Release* → *Run workflow*). Every step is idempotent: an existing tag and release
+   are reused.
+
+## One-time setup
+
+- **PyPI trusted publisher.** On PyPI, add a publisher under *Your projects → potatoq →
+  Publishing*. Before the first release, use a "pending publisher" from *Your account →
+  Publishing*:
+  - owner `anze3db`, repository `potatoq`;
+  - workflow `release.yml`;
+  - environment `pypi`.
+- **GitHub environment `pypi`.** Under *Settings → Environments*, create `pypi`. Add
+  required reviewers if every publish should need a manual approval, and restrict it to
+  the `main` branch.
+- **Labels**: `release`, `skip-changelog`, `breaking`, `feature`, `bug`, `performance`,
+  `documentation`, `maintenance`, `dependencies`.
+- **Actions settings**: allow GitHub Actions to create pull requests (*Settings →
+  Actions → General → Workflow permissions*), so *Prepare release* can open the PR.
+- **Docs**: enable GitHub Pages with source "GitHub Actions". Private repositories need
+  a paid plan for Pages.
+
+## Supply chain notes
+
+- Every third-party action is pinned to a commit SHA (with the version in a comment),
+  and Dependabot (`.github/dependabot.yml`) proposes monthly updates.
+- Jobs get the minimum permissions they need. Only the `pypi` job can mint the PyPI
+  OIDC token, and it doesn't check out code or run any project code.
+- Workflows are audited with [zizmor](https://docs.zizmor.sh/) and
+  [actionlint](https://github.com/rhysd/actionlint):
+  `uvx zizmor .github/workflows` (no findings at the time of writing).

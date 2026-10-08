@@ -29,7 +29,7 @@ def fetch_avatar(self, user_id):
 
 ```console
 $ potatoq -A proj.tasks worker
-[INFO/MainProcess] potatoq 0.1.0 worker potatoq@laptop ready: broker=sqlite:///potatoq.sqlite3
+[INFO/MainProcess] potatoq 26.1 worker potatoq@laptop ready: broker=sqlite:///potatoq.sqlite3
   results=sqlite:///potatoq.sqlite3 queues=default concurrency=8 (prefork) time_limit=1800s ...
 ```
 

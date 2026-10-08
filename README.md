@@ -255,6 +255,12 @@ $ uv sync
 $ uv run pytest                 # needs local Redis, Postgres and RabbitMQ; skips what isn't running
 ```
 
+## Releases
+
+potatoq uses CalVer (`26.1`, `26.2`, …). See [CHANGELOG.md](CHANGELOG.md) for what
+changed and [RELEASING.md](RELEASING.md) for how releases are cut: a release PR,
+trusted publishing to PyPI, and a GitHub release with generated notes.
+
 ## License
 
 MIT

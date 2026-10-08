@@ -40,6 +40,7 @@ nav = [
     "brokers/sqlite.md",
   ] },
   { "Migrating from Celery" = "migrating-from-celery.md" },
+  { "Changelog" = "changelog.md" },
   { "Reference" = [
     "reference/settings.md",
     "reference/cli.md",
@@ -159,6 +160,8 @@ pymdownx.keys = {}
 pymdownx.magiclink = {}
 pymdownx.mark = {}
 pymdownx.smartsymbols = {}
+pymdownx.snippets.base_path = ["."]
+pymdownx.snippets.check_paths = true
 pymdownx.superfences.custom_fences = [
   { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
 ]

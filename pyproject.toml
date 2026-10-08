@@ -1,6 +1,7 @@
 [project]
 name = "potatoq"
-version = "0.1.0"
+# CalVer: YY.N = the Nth release of 20YY (26.1, 26.2, ..., 27.1). Bumped by scripts/release.py.
+version = "26.1"
 description = "A Celery-compatible task queue with production-ready defaults and backend-native Redis, RabbitMQ, Postgres and SQLite brokers."
 readme = "README.md"
 authors = [{ name = "Anže Pečar", email = "anze@pecar.me" }]

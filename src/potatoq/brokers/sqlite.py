@@ -167,7 +167,7 @@ class SQLiteBroker(Broker):
             conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript(SCHEMA)
         columns = {row[1] for row in conn.execute("PRAGMA table_info(potatoq_jobs)")}
-        if "token" not in columns:  # tables created by potatoq < 0.1.0 final
+        if "token" not in columns:  # tables created by pre-release builds
             conn.execute("ALTER TABLE potatoq_jobs ADD COLUMN token INTEGER")
 
     def _write(self, conn: sqlite3.Connection | None = None) -> _WriteTxn:

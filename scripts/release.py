@@ -1,0 +1,251 @@
+"""Release tooling: CalVer versions, changelog generation, release PRs.
+
+    uv run scripts/release.py prepare            # open a "Release 26.N" PR (needs `gh`)
+    uv run scripts/release.py prepare --dry-run  # print the changelog section, change nothing
+    uv run scripts/release.py next-version       # e.g. 26.3
+    uv run scripts/release.py notes 26.2         # the CHANGELOG.md section for a release
+
+Versions are CalVer ``YY.N``: the Nth release of the year (26.1, 26.2, ... 27.1).
+
+Release notes come from GitHub's generator: merged PR titles grouped by label
+(.github/release.yml), new contributors and a compare link. This script adds the
+full list of everyone who contributed to the release, any hand-written notes from
+the "Unreleased" section of CHANGELOG.md, and writes it all into CHANGELOG.md. The
+same text becomes the GitHub release body (.github/workflows/release.yml).
+
+Standard library only, so it runs anywhere `gh` is installed and authenticated.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+CHANGELOG = ROOT / "CHANGELOG.md"
+PYPROJECT = ROOT / "pyproject.toml"
+VERSION_RE = re.compile(r"^(\d{2})\.(\d+)$")
+BOTS = re.compile(r"(\[bot\]$|^dependabot|^github-actions|^renovate)", re.I)
+
+
+# --- pure functions (unit tested) -------------------------------------------------
+
+
+def next_version(existing: list[str], today: dt.date) -> str:
+    """The next CalVer version after ``existing`` tags/versions for ``today``'s year."""
+    year = today.year % 100
+    numbers = [int(m[2]) for v in existing if (m := VERSION_RE.match(v)) and int(m[1]) == year]
+    return f"{year}.{max(numbers, default=0) + 1}"
+
+
+def previous_version(existing: list[str], version: str) -> str | None:
+    """The newest release before ``version`` (None for the very first release)."""
+
+    def key(v: str) -> tuple[int, int]:
+        m = VERSION_RE.match(v)
+        return (int(m[1]), int(m[2])) if m else (-1, -1)
+
+    older = [v for v in existing if VERSION_RE.match(v) and key(v) < key(version)]
+    return max(older, key=key) if older else None
+
+
+def demote_headings(markdown: str, levels: int = 1) -> str:
+    """GitHub's generated notes use ``##``; inside a ``## 26.2`` section they go one deeper."""
+    out = []
+    in_code = False
+    for line in markdown.splitlines():
+        if line.lstrip().startswith("```"):
+            in_code = not in_code
+        if not in_code and re.match(r"^#{1,5} ", line):
+            line = "#" * levels + line
+        out.append(line)
+    return "\n".join(out)
+
+
+def split_unreleased(changelog: str) -> tuple[str, str]:
+    """Return (hand-written "Unreleased" notes, changelog with that section emptied)."""
+    m = re.search(r"^## Unreleased[^\n]*\n(.*?)(?=^## |\Z)", changelog, flags=re.M | re.S)
+    if not m:
+        return "", changelog
+    notes = m.group(1).strip()
+    emptied = changelog[: m.start(1)] + "\n" + changelog[m.end(1) :]
+    return notes, emptied
+
+
+def render_section(
+    version: str,
+    date: dt.date,
+    repo: str,
+    generated: str,
+    contributors: list[str],
+    highlights: str = "",
+) -> str:
+    parts = [f"## [{version}](https://github.com/{repo}/releases/tag/{version}) - {date.isoformat()}", ""]
+    if highlights:
+        parts += ["### Highlights", "", highlights, ""]
+    body = demote_headings(generated.strip())
+    if body:
+        parts += [body, ""]
+    if contributors:
+        people = ", ".join(f"@{login}" for login in contributors)
+        parts += ["### Contributors", "", f"Thank you to everyone who contributed to this release: {people}", ""]
+    return "\n".join(parts).rstrip() + "\n"
+
+
+def insert_section(changelog: str, section: str) -> str:
+    """Insert ``section`` above the newest release (below "Unreleased" if present)."""
+    m = re.search(r"^## (?!Unreleased)", changelog, flags=re.M)
+    if m is None:
+        return changelog.rstrip() + "\n\n" + section
+    return changelog[: m.start()] + section + "\n" + changelog[m.start() :]
+
+
+def extract_section(changelog: str, version: str) -> str:
+    """The body of a release's section (what goes into the GitHub release)."""
+    m = re.search(rf"^## \[?{re.escape(version)}\]?[^\n]*\n(.*?)(?=^## |\Z)", changelog, flags=re.M | re.S)
+    if not m:
+        raise SystemExit(f"CHANGELOG.md has no section for {version}")
+    return m.group(1).strip() + "\n"
+
+
+def set_version(pyproject: str, version: str) -> str:
+    new, n = re.subn(r'^version = "[^"]*"', f'version = "{version}"', pyproject, count=1, flags=re.M)
+    if n != 1:
+        raise SystemExit("No version in pyproject.toml")
+    return new
+
+
+def contributors_from_commits(commits: list[dict]) -> list[str]:
+    """Unique GitHub logins of commit authors (bots excluded), in order of first appearance."""
+    seen: dict[str, None] = {}
+    for commit in commits:
+        for who in (commit.get("author"), commit.get("committer")):
+            login = (who or {}).get("login")
+            if login and not BOTS.search(login) and login != "web-flow":
+                seen.setdefault(login, None)
+                break
+        for line in (commit.get("commit", {}).get("message") or "").splitlines():
+            # Co-authored-by: Name <123+login@users.noreply.github.com>
+            m = re.match(r"co-authored-by:.*<(?:\d+\+)?([^@<>]+)@users\.noreply\.github\.com>", line.strip(), re.I)
+            if m and not BOTS.search(m[1]):
+                seen.setdefault(m[1], None)
+    return list(seen)
+
+
+# --- GitHub / git plumbing ------------------------------------------------------
+
+
+def run(*cmd: str, capture: bool = True) -> str:
+    result = subprocess.run(cmd, cwd=ROOT, check=True, text=True, capture_output=capture)
+    return result.stdout.strip() if capture else ""
+
+
+def gh_json(*args: str) -> object:
+    return json.loads(run("gh", *args))
+
+
+def repo_name() -> str:
+    return run("gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
+
+
+def release_tags() -> list[str]:
+    run("git", "fetch", "--tags", "--quiet")
+    return [t for t in run("git", "tag", "--list").split() if VERSION_RE.match(t)]
+
+
+def generated_notes(repo: str, version: str, previous: str | None, target: str) -> str:
+    args = [
+        "api", "-X", "POST", f"repos/{repo}/releases/generate-notes",
+        "-f", f"tag_name={version}", "-f", f"target_commitish={target}",
+        "-f", "configuration_file_path=.github/release.yml",
+    ]  # fmt: skip
+    if previous:
+        args += ["-f", f"previous_tag_name={previous}"]
+    return str(gh_json(*args)["body"])  # type: ignore[index]
+
+
+def release_contributors(repo: str, previous: str | None, target: str) -> list[str]:
+    if previous:
+        pages = gh_json("api", "--paginate", "--slurp", f"repos/{repo}/compare/{previous}...{target}")
+        commits = [c for page in pages for c in page["commits"]]  # type: ignore[union-attr]
+    else:
+        pages = gh_json("api", "--paginate", "--slurp", f"repos/{repo}/commits?sha={target}&per_page=100")
+        commits = [c for page in pages for c in page]  # type: ignore[union-attr]
+    return contributors_from_commits(commits)
+
+
+# --- commands ---------------------------------------------------------------------
+
+
+def cmd_next_version(args: argparse.Namespace) -> None:
+    print(next_version(release_tags(), dt.date.today()))
+
+
+def cmd_notes(args: argparse.Namespace) -> None:
+    sys.stdout.write(extract_section(CHANGELOG.read_text(), args.version))
+
+
+def cmd_prepare(args: argparse.Namespace) -> None:
+    repo = args.repo or repo_name()
+    tags = release_tags()
+    version = args.version or next_version(tags, dt.date.today())
+    if version in tags:
+        raise SystemExit(f"{version} is already released")
+    previous = previous_version(tags, version)
+    target = args.target
+    changelog = CHANGELOG.read_text()
+    highlights, changelog = split_unreleased(changelog)
+    section = render_section(
+        version,
+        dt.date.today(),
+        repo,
+        generated_notes(repo, version, previous, target),
+        release_contributors(repo, previous, target),
+        highlights,
+    )
+    if args.dry_run:
+        print(f"# Would release {version} (previous: {previous or 'none'})\n")
+        print(section)
+        return
+    run("git", "switch", "-c", f"release/{version}", f"origin/{target}" if args.from_remote else target, capture=False)
+    CHANGELOG.write_text(insert_section(changelog, section))
+    PYPROJECT.write_text(set_version(PYPROJECT.read_text(), version))
+    run("uv", "lock", capture=False)
+    run("git", "add", "CHANGELOG.md", "pyproject.toml", "uv.lock")
+    run("git", "commit", "-m", f"Release {version}", capture=False)
+    run("git", "push", "-u", "origin", f"release/{version}", capture=False)
+    body = (
+        f"Merging this PR publishes **{version}** to PyPI and creates the GitHub release "
+        f"(.github/workflows/release.yml).\n\n---\n\n{section}"
+    )
+    run(
+        "gh", "pr", "create", "--base", target, "--head", f"release/{version}",
+        "--title", f"Release {version}", "--label", "release", "--body", body, capture=False,
+    )  # fmt: skip
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="command", required=True)
+    p = sub.add_parser("prepare", help="Bump the version, write CHANGELOG.md and open a release PR")
+    p.add_argument("--version", help="Override the computed CalVer version")
+    p.add_argument("--target", default="main", help="Branch to release from")
+    p.add_argument("--repo", help="owner/name (default: the current gh repo)")
+    p.add_argument("--from-remote", action="store_true", help="Branch off origin/<target> (CI)")
+    p.add_argument("--dry-run", action="store_true")
+    p.set_defaults(func=cmd_prepare)
+    sub.add_parser("next-version").set_defaults(func=cmd_next_version)
+    n = sub.add_parser("notes")
+    n.add_argument("version")
+    n.set_defaults(func=cmd_notes)
+    args = parser.parse_args(argv)
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()
