@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import ctypes
 import threading
 import time
 
 import pytest
 from test_worker import Worker, events, wapp  # noqa: F401  (fixture)
 
+from potatoq import Potatoq, states
 from potatoq.exceptions import SoftTimeLimitExceeded
 from potatoq.worker import executor
-from potatoq.worker.child import Slot
+from potatoq.worker.child import Slot, _SetAsyncExc
 
 
 def test_slot_injects_only_inside_the_task_body():
@@ -18,20 +20,19 @@ def test_slot_injects_only_inside_the_task_body():
     started = threading.Event()
     outcome: dict = {}
 
-    def body():
-        slot.thread_id = threading.get_ident()
-        executor.set_body_guard(slot)
-        assert not slot.inject(SoftTimeLimitExceeded)  # not in a task yet: refused
-        slot.enter()
+    def spin():
         started.set()
         try:
             while True:
                 pass
         except SoftTimeLimitExceeded:
             outcome["raised"] = True
-        finally:
-            slot.exit()
-        # An injection racing with exit() is cleared, never raised out here.
+
+    def body():
+        slot.thread_id = threading.get_ident()
+        assert not slot.inject(SoftTimeLimitExceeded)  # not in a task yet: refused
+        slot.run(spin)
+        # An injection racing with the end of the body is cleared, never raised out here.
         time.sleep(0.05)
         outcome["after"] = "clean"
 
@@ -42,6 +43,85 @@ def test_slot_injects_only_inside_the_task_body():
     t.join(5)
     assert outcome == {"raised": True, "after": "clean"}
     assert not slot.inject(SoftTimeLimitExceeded)
+
+
+def test_injection_racing_with_the_body_returning_is_dropped():
+    # inject() saw the slot in the body just as the task returned: the exception is
+    # raised while the slot thread clears pending injections, right after it gets the
+    # lock (3.14+) or under it. It must not fail the finished task, escape into the
+    # executor, or leave the lock held (which deadlocked the slot's next task).
+    app = Potatoq("threads-race", broker="memory://", set_as_current=False)
+    slot = Slot(0)
+    returning, go = threading.Event(), threading.Event()
+    outcomes: list = []
+
+    @app.task(name="race.finish")
+    def finish():
+        returning.set()
+        go.wait(5)
+        return "done"
+
+    def slot_thread():
+        slot.thread_id = threading.get_ident()
+        executor.set_body_guard(slot)
+        for _ in range(2):  # the next task in the same slot
+            outcomes.append(executor.execute(app, finish.build_message([], {}), hostname="test"))
+
+    t = threading.Thread(target=slot_thread, daemon=True)
+    t.start()
+    assert returning.wait(5)
+    with slot.lock:  # what inject() does, having just seen in_body set
+        go.set()
+        time.sleep(0.2)  # the task returns; its slot thread now waits for the lock
+        assert _SetAsyncExc(ctypes.c_ulong(slot.thread_id), ctypes.py_object(SoftTimeLimitExceeded)) == 1
+    t.join(5)
+    assert not t.is_alive(), "the slot deadlocked on its next task"
+    assert [(o.state, o.retval) for o in outcomes] == [(states.SUCCESS, "done")] * 2
+    assert not slot.in_body
+    assert slot.lock.acquire(timeout=1)
+    slot.lock.release()
+    assert not slot.inject(SoftTimeLimitExceeded)
+    app.close()
+
+
+def test_eager_apply_inside_a_task_keeps_the_outer_task_interruptible():
+    app = Potatoq("threads-nested", broker="memory://", set_as_current=False)
+    slot = Slot(0)
+    started = threading.Event()
+    seen: list = []
+
+    @app.task(name="nested.inner")
+    def inner():
+        return 1
+
+    @app.task(name="nested.outer")
+    def outer(spin):
+        inner.apply()
+        seen.append((executor.in_task_body(), slot.in_body))
+        if spin:
+            started.set()
+            try:
+                while True:
+                    time.sleep(0.01)
+            except SoftTimeLimitExceeded:
+                return "interrupted"
+
+    outer.apply((False,))  # --threads 1: the soft limit is a signal, gated by in_task_body()
+    assert seen == [(True, False)] and not executor.in_task_body()
+
+    def slot_thread():
+        slot.thread_id = threading.get_ident()
+        executor.set_body_guard(slot)
+        seen.append(executor.execute(app, outer.build_message([True], {}), hostname="test").retval)
+
+    t = threading.Thread(target=slot_thread, daemon=True)
+    t.start()
+    assert started.wait(5)
+    assert slot.inject(SoftTimeLimitExceeded)
+    t.join(5)
+    assert seen[1:] == [(True, True), "interrupted"]
+    assert not slot.in_body
+    app.close()
 
 
 def test_threads_run_tasks_concurrently(wapp, tmp_path):  # noqa: F811

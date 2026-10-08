@@ -57,17 +57,22 @@ def _rss_kib() -> int:
         return maxrss // 1024 if sys.platform == "darwin" else maxrss
 
 
+#: What the main thread injects into slot threads.
+_INJECTED = (SoftTimeLimitExceeded, WorkerTerminate)
+
+
 class Slot:
     """One task slot (a thread, or the main thread when ``threads=1``).
 
-    ``enter``/``exit`` bracket the user's task code. Exceptions are only injected while
-    the slot is inside that bracket and while holding ``lock``; ``exit`` clears any
-    injection still pending, so an interruption can never land in broker bookkeeping.
+    ``run`` brackets the user's task code. Exceptions are only injected while the slot
+    is inside that bracket and while holding ``lock``; ``run`` clears any injection still
+    pending on the way out, so an interruption can never land in broker bookkeeping.
     """
 
     def __init__(self, index: int):
         self.index = index
-        self.lock = threading.Lock()
+        # An RLock only so that ``run`` can tell whether it holds it (``_is_owned``).
+        self.lock = threading.RLock()
         self.thread_id: int | None = None
         self.in_body = False
         self.task_id: str | None = None
@@ -76,15 +81,35 @@ class Slot:
         self.consumer: Any = None
         self.fetching = False
 
-    def enter(self) -> None:
-        with self.lock:
+    def run(self, fn: Any, /, *args: Any, **kwargs: Any) -> Any:
+        """Call ``fn`` (on this slot's thread) as the task body."""
+        try:
             self.in_body = True
-
-    def exit(self) -> None:
-        with self.lock:
+            return fn(*args, **kwargs)
+        finally:
+            # An inject() that saw in_body just before the store below still lands, at
+            # the next eval-breaker check: a call returning (e.g. right after acquiring
+            # the lock), a function entry, a loop back-edge. It must neither escape into
+            # broker code nor leak the lock, so all of this runs in this frame (a helper
+            # would check on entry) and is retried, releasing the lock if the injection
+            # interrupted us holding it, until the injection is cleared under the lock.
+            # The store comes first and is plain (no check), so every inject() taking
+            # the lock after us refuses: only an injection already under way lands here.
+            # The body has returned or raised by then, so its result stands and the
+            # late interruption is dropped (an abort still stops the slot: ``stopping``
+            # is set before injecting).
             self.in_body = False
-            if self.thread_id is not None:
-                _SetAsyncExc(ctypes.c_ulong(self.thread_id), None)  # drop a pending injection
+            while True:
+                try:
+                    while self.lock._is_owned():  # type: ignore[attr-defined]
+                        self.lock.release()
+                    self.lock.acquire()  # waits out an inject() in progress
+                    if self.thread_id is not None:
+                        _SetAsyncExc(ctypes.c_ulong(self.thread_id), None)  # drop a pending injection
+                    self.lock.release()
+                    break
+                except _INJECTED:
+                    pass
 
     def inject(self, exc_type: type[BaseException], task_id: str | None = None) -> bool:
         with self.lock:
@@ -208,11 +233,13 @@ class Child:
     def _check_soft_limits(self) -> None:
         now = time.monotonic()
         for slot in self.slots:
-            deadline = slot.soft_deadline
-            if deadline is not None and now >= deadline and not slot.soft_fired:
+            with slot.lock:  # one task's id and deadline: the slot may have moved on to the next
+                task_id, deadline = slot.task_id, slot.soft_deadline
+                if deadline is None or now < deadline or slot.soft_fired:
+                    continue
                 slot.soft_fired = True
-                if slot.inject(SoftTimeLimitExceeded, slot.task_id):
-                    logger.warning("Soft time limit exceeded for task %s; interrupting it", slot.task_id)
+            if slot.inject(SoftTimeLimitExceeded, task_id):
+                logger.warning("Soft time limit exceeded for task %s; interrupting it", task_id)
 
     def _slot_loop(self, slot: Slot) -> None:
         slot.thread_id = threading.get_ident()
@@ -286,9 +313,10 @@ class Child:
         )
         is_async = task is not None and inspect.iscoroutinefunction(getattr(task.run, "__func__", task.run))
         use_alarm = bool(soft) and not is_async and self.threads == 1
-        slot.task_id = message.id
-        slot.soft_fired = False
-        slot.soft_deadline = time.monotonic() + soft if soft and not is_async and self.threads > 1 else None
+        with slot.lock:
+            slot.task_id = message.id
+            slot.soft_fired = False
+            slot.soft_deadline = time.monotonic() + soft if soft and not is_async and self.threads > 1 else None
         if use_alarm and soft:
             signal.setitimer(signal.ITIMER_REAL, soft)
         try:
@@ -301,8 +329,9 @@ class Child:
         finally:
             if use_alarm:
                 signal.setitimer(signal.ITIMER_REAL, 0)
-            slot.soft_deadline = None
-            slot.task_id = None
+            with slot.lock:
+                slot.soft_deadline = None
+                slot.task_id = None
         try:
             executor.settle(app, slot.consumer, delivery, outcome)
         except Exception:

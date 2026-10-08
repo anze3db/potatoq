@@ -42,7 +42,7 @@ logger = logging.getLogger("potatoq.worker")
 
 #: Per thread: whether user task code is running right now. Time limits and forced
 #: shutdown only ever interrupt a task while this is set, never broker bookkeeping.
-#: ``guard`` (optional, set by threaded workers) is entered/exited around the body.
+#: ``guard`` (optional, set by threaded workers) runs the body: ``guard.run(fn, *args)``.
 _body = threading.local()
 
 
@@ -51,7 +51,7 @@ def in_task_body() -> bool:
 
 
 def set_body_guard(guard: Any) -> None:
-    """Install an object with ``enter()``/``exit()`` for this thread's task bodies."""
+    """Install an object whose ``run(fn, *args, **kwargs)`` calls this thread's task bodies."""
     _body.guard = guard
 
 
@@ -308,17 +308,19 @@ def execute(
     try:
         signals.task_prerun.send(sender=task, task_id=message.id, task=task, args=message.args, kwargs=message.kwargs)
         task.before_start(message.id, message.args, message.kwargs)
-        guard = getattr(_body, "guard", None)
+        # An eager apply() inside a task runs within the outer task's body: only the
+        # outermost execute() owns it, so the outer task stays interruptible afterwards.
+        nested = in_task_body()
+        guard = None if nested else getattr(_body, "guard", None)
         try:
             _body.active = True
-            if guard is not None:
-                guard.enter()
             try:
-                retval = task(*message.args, **message.kwargs)
-            finally:
                 if guard is not None:
-                    guard.exit()
-                _body.active = False
+                    retval = guard.run(task, *message.args, **message.kwargs)
+                else:
+                    retval = task(*message.args, **message.kwargs)
+            finally:
+                _body.active = nested
         except Exception as exc:
             if (
                 task.autoretry_for
