@@ -1,11 +1,85 @@
 # Roadmap and wishlist
 
-What potatoq doesn't do yet. It covers known gaps, features people expect from the
-Celery ecosystem, and ideas from the [research](design/research/celery-pain-points.md).
+What potatoq doesn't do yet. It covers known issues and gaps, features people expect
+from the Celery ecosystem, and ideas from the [research](design/research/celery-pain-points.md).
 Contributions are very welcome: open an issue to discuss the design before starting
 on anything large ([contributing guide](https://github.com/anze3db/potatoq/blob/main/CONTRIBUTING.md)).
 
 Each item says *why* it matters, so the priority is easy to judge.
+
+## Known issues
+
+Bugs found in review before the first release, to be fixed after it. Each has a
+reproducer; most need an unusual setup or a crash at the wrong moment.
+
+### Canvas
+
+- [ ] **A chord body can run twice.** A header task that counted itself and then lost
+  its worker before acking is redelivered after the chord finished, and the brokers'
+  `chord_part_done` hands back the results again. Fix: remember in the chord row that
+  the callback was sent, and only return results while it wasn't.
+- [ ] **Chords wait forever on header tasks that never finish.** A header task that
+  expires, is revoked, rejected (`Reject`) or unregistered is never counted. Fix: count
+  these terminal outcomes as failures, so the chord fails with `ChordError` like Celery.
+- [ ] **Signatures by name only lose options as later chain steps or callbacks.**
+  `Signature("remote.x").set(countdown=60, priority=7)` is sent without its ETA,
+  priority, expiry or chord membership. Fix: build the message through the same stub
+  task `send_task` uses.
+- [ ] **An errback can fire twice** for a chain with an errback whose group step is
+  followed by more steps, when one header task fails and a different one finishes last.
+- [ ] **Eager mode skips some errbacks.** With `.apply()`, an errback attached to one
+  later step doesn't fire when an earlier step fails (errbacks on the chain itself do).
+- [ ] **Small API gaps:** chain results have no `.parent` (`res.parent.get()`), and
+  `group.clone(**opts)` / `chord.clone(**opts)` ignore `opts`.
+
+### Workers with `--threads`
+
+- [ ] **A crashing task costs its neighbours a delivery.** When a process dies
+  (segfault, OOM, `os._exit`), every task running in its other threads is requeued as a
+  failed delivery, so a poison task can get healthy tasks dead-lettered with it. Fix:
+  requeue them without counting, flagged to run alone next time so the culprit shows.
+- [ ] **On RabbitMQ, a hard time limit costs its neighbours a delivery.** Tasks killed
+  because another task in their process overran count toward the quorum queue's
+  delivery limit and are eventually dead-lettered by RabbitMQ. Other brokers requeue
+  them without counting. Fix: have the child nack them before the supervisor kills it.
+- [ ] **Recycling idles the whole process.** At `max_tasks_per_child` or
+  `max_memory_per_child` all threads stop taking tasks until the slowest one finishes,
+  and the replacement process only starts then. Fix: report "draining" to the
+  supervisor so it can start the replacement right away.
+- [ ] **`-P threads` ignores `worker_threads` and `worker_concurrency`** from the
+  config and defaults to 10 threads; pass `-c` for now.
+
+### `django.tasks` backend
+
+- [ ] **`get_result()` can raise `TaskResultDoesNotExist` for a valid id** while the
+  task is finishing: it reads the result store and the queue separately. Fix: read the
+  queue first, then the result.
+- [ ] **Results on RabbitMQ and Redis.** With RabbitMQ and a result backend, a waiting
+  task isn't found until it finishes. With Redis and no result backend,
+  `supports_get_result` is true but results aren't stored. Fix: store results for
+  Django tasks, and treat a missing record as waiting when the broker can't peek.
+- [ ] **`USE_TZ = False`**: result timestamps are aware while Django's are naive, so
+  subtracting them raises.
+- [ ] **Arguments aren't normalized like Django's.** The raw arguments are sent instead
+  of Django's JSON-normalized ones (bytes, integer dict keys, `range` and `deque` behave
+  differently than with `ImmediateBackend`).
+- [ ] **`task_always_eager`**: the result says READY although the task ran, signals
+  fire in the wrong order, and `refresh()` raises.
+- [ ] **Result details**: RUNNING results have no `started_at` or worker id;
+  `get_result().task` forgets `.using()` overrides and the backend alias; autoretried
+  attempts send `task_finished` with FAILED, and earlier attempts' errors aren't kept.
+
+### Transactions and serialization
+
+- [ ] **`group` and `chord` ignore `using=` and `enqueue_on_commit`**, from the call and
+  from their tasks, so a group inside a SQLAlchemy session or a non-default Django
+  database is sent before COMMIT. Fix: pass them to `app.publish` like `apply_async`.
+- [ ] **A plain dict can be decoded as a tagged value.** A task argument like
+  `{"__type__": "datetime", "__value__": "…"}` arrives as a `datetime`. Fix: escape
+  dicts that use the tag keys when encoding.
+- [ ] **Postgres wake-ups are delayed after an enqueue inside a transaction.** Its
+  `NOTIFY` only goes out at COMMIT but still starts the 50 ms debounce, so other
+  enqueues in that window wait for the next poll (up to `poll_interval`). Nothing is lost.
 
 ## Known gaps
 

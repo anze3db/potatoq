@@ -70,7 +70,8 @@ thread-safe**: no shared mutable module state, and thread-safe client libraries.
     - **Hard time limit**: still enforced, by killing the **whole process**. The task that
       overran is marked failed with `TimeLimitExceeded`. Every *other* task running in that
       process is interrupted too, and requeued without counting as a failed delivery: it
-      runs again from the start on another process, so it must be idempotent.
+      runs again from the start on another process, so it must be idempotent. (Except on
+      RabbitMQ, where it does count, see [known issues](../wishlist.md#workers-with-threads).)
     - **Shutdown**: on `SIGTERM` running tasks get `--shutdown-timeout` to finish, then
       `WorkerTerminate` is injected the same way (and the process killed 5 s later if a
       thread is stuck in C code). Interrupted tasks are requeued without penalty.
