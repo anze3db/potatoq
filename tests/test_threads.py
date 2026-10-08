@@ -137,7 +137,7 @@ def test_threads_run_tasks_concurrently(wapp, tmp_path):  # noqa: F811
     ends = sorted(e["at"] for e in events(tmp_path, "nap-end"))
     assert len({e["pid"] for e in events(tmp_path, "nap-start")}) == 1  # one process
     assert starts[-1] < ends[0], "the four tasks should overlap"
-    assert "1 processes x 4 threads" in w.output()
+    assert "4 = 1 process × 4 threads" in w.output()  # noqa: RUF001
 
 
 def test_threads_soft_time_limit_interrupts_python_code(wapp, tmp_path):  # noqa: F811

@@ -64,7 +64,9 @@ automatically. The [design notes](../design/defaults.md) explain each default.
 | `worker_dead_after` | `60` | A silent node's tasks are recovered after this |
 | `worker_enable_scheduler` | `True` | Run `beat_schedule` in this worker |
 | `worker_hijack_root_logger` | `False` | |
-| `worker_log_format`, `worker_task_log_format` | Celery's formats | |
+| `worker_log_format`, `worker_task_log_format` | Celery's formats | Setting either replaces potatoq's [log format](../guide/workers.md#logging) with yours |
+| `worker_log_color` | `None` | `None`: on for terminals; `NO_COLOR` and `FORCE_COLOR` are respected |
+| `worker_log_emoji` | `None` | `None`: on unless `POTATOQ_NO_EMOJI` is set |
 
 ## Scheduling
 

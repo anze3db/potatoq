@@ -172,6 +172,48 @@ def init(**kwargs):
 
 ## Logging
 
+On a terminal the worker's log reads like FastAPI's: a column of colored tags, and one
+line per task attempt saying what happened and how long it took.
+
+```console
+$ potatoq -A proj worker
+12:00:01    potatoq   🥔 Worker potatoq@web-1 is ready (potatoq 26.1)
+12:00:01     broker   redis://localhost:6379/0
+12:00:01    results   not stored by default (backend redis://localhost:6379/0)
+12:00:01     queues   default
+12:00:01    workers   4 processes
+12:00:01     limits   30m00s per task, new process every 1000 tasks
+12:00:01   schedule   1 periodic task
+12:00:01      tasks   3 registered: shop.charge, shop.refund, shop.send_receipt
+12:00:01   schedule   nightly → shop.report, 0 3 * * *, next run 2026-10-10 03:00:00 UTC
+12:00:02       INFO   ✅ shop.send_receipt[3f2a91c4-…] succeeded in 12ms
+12:00:02       INFO   🔁 shop.charge[9c1d0e7b-…] failed in 31ms, will retry in 8.78s: TimeoutError('gateway')
+12:00:03      ERROR   ❌ shop.refund[51b0c2aa-…] failed in 2ms: ValueError('never charged')
+Traceback (most recent call last):
+  File "/app/shop/tasks.py", line 42, in refund
+    raise ValueError("never charged")
+ValueError: never charged
+```
+
+Tracebacks start at your task, without potatoq's own frames. When the output isn't a
+terminal (a file, journald, a container's log collector), each record is one plain
+line instead, Celery-style:
+
+```text
+[2026-10-09 12:00:02,120: INFO/ForkPoolWorker-1] ✅ Task shop.send_receipt[3f2a91c4-…] succeeded in 12ms
+```
+
+Colors only go to terminals, and follow [`NO_COLOR`](https://no-color.org) and
+`FORCE_COLOR`. Emojis are on unless you set `POTATOQ_NO_EMOJI=1`. `potatoq --no-color`
+and `--no-emoji` (or the `worker_log_color` and `worker_log_emoji` settings) turn them
+off, and `--color` forces colors on. Setting `worker_log_format` (Celery's format string)
+switches to that format as given.
+
+The messages themselves stay plain text: colors, emojis and the gutter are added by the
+handler potatoq installs, so other handlers and JSON log processors get clean records.
+Task outcomes carry `potatoq_event` (`success`, `retry`, `failure`, …), `task_name`,
+`task_id` and `runtime` as record attributes.
+
 The worker only configures logging if nothing else has. It never replaces handlers you
 set up (Celery hijacks the root logger by default). Records emitted inside a task carry
 `task_id` and `task_name`.
@@ -193,8 +235,11 @@ LOGGING = {
 
 ```console
 $ potatoq -A proj status
-potatoq@web-1:4121:9c1e2a: queues=default concurrency=8 running=3 heartbeat=2s ago
-potatoq@web-2:4180:1f0b7d: queues=default concurrency=8 (2 processes x 4 threads) running=1 heartbeat=1s ago
+    workers   2 live
+
+             WORKER                       QUEUES    CONCURRENCY   RUNNING   HEARTBEAT
+             🟢 potatoq@web-1:4121:9c1e2a   default             8         3      2s ago
+             🟢 potatoq@web-2:4180:1f0b7d   default       8 (2×4)         1      1s ago
 $ potatoq -A proj inspect active
 ```
 

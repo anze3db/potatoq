@@ -9,14 +9,16 @@ import signal
 import socket
 import sys
 import textwrap
+import time
 import types
 import uuid
 from pathlib import Path
 
 import pytest
 
-from potatoq import Potatoq, cli
+from potatoq import Potatoq, cli, console
 from potatoq.brokers.sqlite import SQLiteBroker
+from potatoq.message import Message
 from potatoq.testing import drain
 from potatoq.worker import supervisor
 
@@ -44,6 +46,19 @@ def app():
 
 def run(app, *argv):
     return cli.main(["-A", app, *argv])
+
+
+@pytest.fixture(autouse=True)
+def _plain_output(monkeypatch):
+    """Assertions read plain text: no emojis (captured output has no colors anyway)."""
+    monkeypatch.setenv("POTATOQ_NO_EMOJI", "1")
+    yield
+    console.configure()
+
+
+def said(capsys) -> list[str]:
+    """What the command printed, one entry per non-empty line, whitespace collapsed."""
+    return [" ".join(line.split()) for line in capsys.readouterr().out.splitlines() if line.strip()]
 
 
 # --- finding the app ------------------------------------------------------------
@@ -176,7 +191,7 @@ def test_find_app_with_django_settings_but_no_django(project, monkeypatch):
 def test_main_imports_the_app_by_name(project, capsys):
     name = project(f"{project.unique('named')}.py", APP_SOURCE.format(name="app"))
     assert cli.main(["-A", name, "queues"]) == 0
-    assert capsys.readouterr().out == "All queues are empty\n"
+    assert said(capsys) == ["queues All queues are empty"]
 
 
 # --- global options -------------------------------------------------------------
@@ -339,16 +354,20 @@ def test_beat_warns_when_there_is_nothing_to_schedule(app, monkeypatch, caplog):
 
 def test_status(app, capsys):
     assert run(app, "status") == 1
-    assert capsys.readouterr().out == "No live workers\n"
+    assert said(capsys) == ["workers No live workers"]
 
     app.broker.heartbeat("w1@host:1", {"hostname": "w1@host", "queues": ["a", "b"], "concurrency": 4, "running": ["t"]})
     assert run(app, "status") == 0
-    out = capsys.readouterr().out
-    assert out.startswith("w1@host:1: queues=a,b concurrency=4 running=1 heartbeat=0s ago")
+    assert said(capsys) == [
+        "workers 1 live",
+        "WORKER QUEUES CONCURRENCY RUNNING HEARTBEAT",
+        "w1@host:1 a,b 4 1 just now",
+    ]
 
     app.broker.heartbeat("w1@host:1", {"hostname": "w1@host", "queues": ["a"], "concurrency": 2, "threads": 4})
+    app.broker.workers_["w1@host:1"]["heartbeat"] -= 125  # stale for a minute or two
     assert run(app, "status") == 0
-    assert "concurrency=8 (2 processes x 4 threads) running=0" in capsys.readouterr().out
+    assert said(capsys)[-1] == "w1@host:1 a 8 (2×4) 0 2m ago"  # noqa: RUF001
 
     assert run(app, "status", "--json") == 0
     assert [w["id"] for w in json.loads(capsys.readouterr().out)] == ["w1@host:1"]
@@ -356,7 +375,7 @@ def test_status(app, capsys):
 
 def test_inspect(app, capsys):
     assert run(app, "inspect", "ping") == 1
-    assert capsys.readouterr().out == "Error: No nodes replied.\n"
+    assert said(capsys) == ["error No workers replied (is a worker running? see potatoq status)"]
 
     from potatoq.control import publish_registered
 
@@ -378,12 +397,12 @@ def test_inspect(app, capsys):
 
 def test_queues(app, capsys):
     assert run(app, "queues") == 0
-    assert capsys.readouterr().out == "All queues are empty\n"
+    assert said(capsys) == ["queues All queues are empty"]
     app.send_task("cli.x", queue="b")
     app.send_task("cli.x", queue="b")
     app.send_task("cli.x", queue="a")
     assert run(app, "queues") == 0
-    assert capsys.readouterr().out == "a: 1\nb: 2\n"
+    assert said(capsys) == ["queues 3 tasks waiting", "QUEUE WAITING", "a 1", "b 2"]
     assert run(app, "queues", "--json") == 0
     assert json.loads(capsys.readouterr().out) == {"a": 1, "b": 2}
 
@@ -398,11 +417,11 @@ def test_purge_asks_for_confirmation(app, monkeypatch, capsys):
     prompts = []
     monkeypatch.setattr("builtins.input", lambda prompt: prompts.append(prompt) or "y")
     assert run(app, "purge") == 0
-    assert prompts == ["Delete all waiting tasks in default? [y/N] "]
-    assert capsys.readouterr().out == "default: purged 1 tasks\n"
+    assert [" ".join(p.split()) for p in prompts] == ["purge Delete all waiting tasks in default? [y/N]"]
+    assert said(capsys) == ["purged 1 task from default"]
 
     assert run(app, "purge", "-f", "-Q", "other,") == 0
-    assert capsys.readouterr().out == "other: purged 1 tasks\n"
+    assert said(capsys) == ["purged 1 task from other"]
     assert app.broker.queue_sizes() == {}
 
 
@@ -416,13 +435,13 @@ def test_call_and_result(app, capsys):
     assert app.broker.peek(task_id)[0].queue == "math"
 
     assert run(app, "result", task_id) == 0
-    assert capsys.readouterr().out == "PENDING: None\n"
+    assert said(capsys) == ["state PENDING", "result None"]
     assert run(app, "result", task_id, "--wait", "0.01") == 1
-    assert capsys.readouterr().out.startswith("PENDING: ")
+    assert said(capsys)[0] == "state PENDING"
 
     drain(app)
     assert run(app, "result", task_id, "--wait", "1") == 0
-    assert capsys.readouterr().out == "SUCCESS: 5\n"
+    assert said(capsys) == ["state SUCCESS", "result 5"]
 
 
 def test_result_shows_the_traceback_of_a_failure(app, capsys):
@@ -434,14 +453,14 @@ def test_result_shows_the_traceback_of_a_failure(app, capsys):
     drain(app)
     assert run(app, "result", result.id) == 0
     out = capsys.readouterr().out
-    assert out.startswith("FAILURE: ValueError('boom')\n")
+    assert [" ".join(line.split()) for line in out.splitlines()[:2]] == ["state FAILURE", "error ValueError('boom')"]
     assert "Traceback" in out and 'raise ValueError("boom")' in out
 
 
 def test_revoke(app, capsys):
     first, second = app.send_task("cli.x"), app.send_task("cli.x")
     assert run(app, "revoke", first.id, second.id) == 0
-    assert capsys.readouterr().out == "Revoked 2 task(s)\n"
+    assert said(capsys) == ["revoked 2 tasks"]
     assert app.broker.queue_sizes() == {}
     assert first.state == "REVOKED"
 
@@ -460,20 +479,23 @@ def test_dead_letters_list_and_retry(app, capsys):
         return "ok"
 
     assert run(app, "dead", "list") == 0
-    assert capsys.readouterr().out == "No dead-lettered tasks\n"
+    assert said(capsys) == ["dead No dead-lettered tasks"]
 
     result = flaky.delay()
     drain(app)
     assert run(app, "dead", "list") == 0
-    line = capsys.readouterr().out
-    assert line.startswith(f"{result.id}  cli.flaky  queue=default  died=")
-    assert line.rstrip().endswith("RuntimeError: first attempt fails")
+    assert said(capsys) == [
+        "dead 1 dead-lettered task, newest first",
+        "TASK ID QUEUE DIED REASON",
+        f"cli.flaky {result.id} default just now RuntimeError: first attempt fails",
+        "tip Run one again with: potatoq dead retry <ID>",
+    ]
 
     assert run(app, "dead", "list", "--json", "--limit", "5") == 0
     assert [e["id"] for e in json.loads(capsys.readouterr().out)] == [result.id]
 
     assert run(app, "dead", "retry", result.id, "missing-id") == 0
-    assert capsys.readouterr().out == f"{result.id}: requeued\nmissing-id: not found\n"
+    assert said(capsys) == [f"requeued {result.id}", "missing missing-id isn't in the dead letters"]
     drain(app)
     assert result.get(timeout=1) == "ok"
 
@@ -482,7 +504,11 @@ def test_dead_letter_without_reason_or_time(app, monkeypatch, capsys):
     entry = {"id": "abc", "task": "cli.x", "queue": "default", "reason": None, "died_at": None}
     monkeypatch.setattr(app.broker, "dead_letters", lambda limit: [entry])
     assert run(app, "dead") == 0  # `dead` alone lists
-    assert capsys.readouterr().out == "abc  cli.x  queue=default  died=?  \n"
+    assert said(capsys)[2] == "cli.x abc default ?"
+
+    entry.update(died_at=time.time() - 7200, reason="x" * 100)
+    assert run(app, "dead") == 0
+    assert said(capsys)[2] == f"cli.x abc default 2h ago {'x' * 69}…"
 
 
 # --- migrate / shell ------------------------------------------------------------
@@ -491,9 +517,7 @@ def test_dead_letter_without_reason_or_time(app, monkeypatch, capsys):
 def test_migrate_sets_up_broker_and_separate_result_backend(app, tmp_path, capsys):
     app.conf.result_backend = f"sqlite:///{tmp_path}/results.db"
     assert run(app, "migrate") == 0
-    assert capsys.readouterr().out == (
-        f"Broker set up: {app.broker.url}\nResult backend set up: sqlite:///{tmp_path}/results.db\n"
-    )
+    assert said(capsys) == [f"broker Set up {app.broker.url}", f"results Set up sqlite:///{tmp_path}/results.db"]
     assert isinstance(app.backend, SQLiteBroker)
     assert (tmp_path / "results.db").exists()
 
@@ -555,11 +579,13 @@ def test_hostname_placeholders_like_celery(monkeypatch):
 
 def test_schedule_lists_entries_with_next_run(app, capsys):
     assert run(app, "schedule") == 0
-    assert capsys.readouterr().out == "No periodic tasks (beat_schedule is empty)\n"
+    assert said(capsys) == ["schedule No periodic tasks (beat_schedule is empty)"]
     app.conf.beat_schedule = {"ping": {"task": "cli.ping", "schedule": 30.0}}
+    app.broker.enqueue_periodic("ping", time.time() - 90, Message(task="cli.ping"))
     assert run(app, "schedule") == 0
-    out = capsys.readouterr().out
-    assert out.startswith("ping: cli.ping ") and " next=20" in out and out.rstrip().endswith(" UTC")
+    lines = said(capsys)
+    assert lines[:2] == ["schedule 1 periodic task, times in UTC", "ENTRY TASK SCHEDULE NEXT RUN LAST SENT"]
+    assert lines[2].startswith("ping cli.ping every 30s 20") and lines[2].endswith(" 1m ago")
 
 
 def test_solo_worker_heartbeats_while_a_task_runs(app, monkeypatch, caplog):

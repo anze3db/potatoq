@@ -13,8 +13,10 @@ import threading
 import time
 from typing import Any
 
+from . import console
 from .app import Potatoq, current_app
 from .config import redact_url
+from .exceptions import ImproperlyConfigured, OperationalError
 
 logger = logging.getLogger("potatoq")
 
@@ -79,8 +81,19 @@ def _import_app(spec: str) -> Potatoq:
 
 
 def build_parser(prog: str = "potatoq") -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog=prog, description="Potatoq task queue")
+    extra: dict[str, Any] = {"color": console.color_enabled(sys.stdout)} if sys.version_info >= (3, 14) else {}
+    parser = argparse.ArgumentParser(
+        prog=prog, description="potatoq: the Python task queue with production-ready defaults", **extra
+    )
     parser.add_argument("-A", "--app", help="Application, e.g. proj or proj.celery:app")
+    parser.add_argument(
+        "--color", action=argparse.BooleanOptionalAction, default=None,
+        help="Colors in output and logs (default: on for terminals; NO_COLOR and FORCE_COLOR work too)",
+    )  # fmt: skip
+    parser.add_argument(
+        "--emoji", action=argparse.BooleanOptionalAction, default=None,
+        help="Emojis in output and logs (default: on; or set POTATOQ_NO_EMOJI=1)",
+    )  # fmt: skip
     parser.add_argument("-b", "--broker", help="Broker URL (overrides configuration)")
     parser.add_argument("--result-backend", help="Result backend URL")
     parser.add_argument("--workdir", help="Change to this directory first")
@@ -174,6 +187,16 @@ def main(argv: list[Any] | None = None, prog: str = "potatoq") -> int:
         app_obj = argv[1]
         argv = argv[2:]
     args = build_parser(prog).parse_args([str(a) for a in argv])
+    console.configure(color=args.color, emoji=args.emoji)
+    try:
+        return _run(args, app_obj)
+    except (ImproperlyConfigured, OperationalError) as exc:
+        err = console.painter(sys.stderr)
+        print(err.line("error", f"{err.icon('❌')}{exc}", "red"), file=sys.stderr)
+        return 1
+
+
+def _run(args: argparse.Namespace, app_obj: Potatoq | None) -> int:
     if args.workdir:
         os.chdir(args.workdir)
     if app_obj is not None:
@@ -343,7 +366,10 @@ def cmd_beat(app: Potatoq, args: argparse.Namespace) -> int:
     if not scheduler:
         logger.warning("beat_schedule is empty; nothing to do")
     scheduler.start()
-    logger.info("Note: every potatoq worker already runs the scheduler; a separate beat is optional")
+    logger.info(
+        "Every potatoq worker already runs the scheduler; a separate beat is optional",
+        extra={"potatoq_tag": "note"},
+    )
     try:
         while True:
             scheduler.tick()
@@ -357,16 +383,61 @@ def _print(data: Any, as_json: bool) -> None:
         print(json.dumps(data, indent=2, default=str))
 
 
-def cmd_schedule(app: Potatoq, args: argparse.Namespace) -> int:
-    from .worker.scheduler import describe, load_entries
+def _out() -> console.Painter:
+    return console.painter(sys.stdout)
 
+
+def _coarse(seconds: float) -> str:
+    """``42s``, ``5m``, ``2h13m``, ``3d4h``: precise enough for a glance."""
+    seconds = int(abs(seconds))
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m"
+    if seconds < 86400:
+        hours, minutes = divmod(seconds // 60, 60)
+        return f"{hours}h{minutes:02d}m" if minutes else f"{hours}h"
+    days, hours = divmod(seconds // 3600, 24)
+    return f"{days}d{hours}h" if hours else f"{days}d"
+
+
+def _ago(seconds: float) -> str:
+    return "just now" if seconds < 1 else f"{_coarse(seconds)} ago"
+
+
+def cmd_schedule(app: Potatoq, args: argparse.Namespace) -> int:
+    from datetime import UTC, datetime
+
+    from .worker.scheduler import describe_schedule, load_entries, local_time
+
+    out = _out()
     app.loader_import_default_modules()
-    entries = describe(app, load_entries(app))
+    entries = load_entries(app)
     if not entries:
-        print("No periodic tasks (beat_schedule is empty)")
+        print(out.line("schedule", "No periodic tasks (beat_schedule is empty)", "yellow"))
         return 0
-    for entry, next_run in entries:
-        print(f"{entry.name}: {entry.task} {entry.schedule!r} next={next_run}")
+    last = app.broker.last_periodic_runs()
+    now = datetime.now(UTC)
+    rows = []
+    for entry in entries:
+        try:
+            upcoming = entry.schedule.next_after(now)
+            next_run = local_time(app, upcoming)[: -len(app.conf.timezone or "UTC") - 1]
+            wait = (upcoming - now).total_seconds()
+            next_run += out.style(f" (in {_coarse(wait)})" if wait >= 1 else " (due now)", "dim")
+        except Exception as exc:
+            next_run = out.style(f"unknown ({exc})", "red")
+        sent = last.get(entry.name)
+        rows.append([
+            out.style(entry.name, "bold"), entry.task, describe_schedule(entry.schedule), next_run,
+            _ago(now.timestamp() - sent) if sent is not None else out.style("—", "dim"),
+        ])  # fmt: skip
+    zone = app.conf.timezone or "UTC"
+    n = len(entries)
+    print(out.line("schedule", f"{out.icon('⏰')}{n} periodic task{'s' if n != 1 else ''}, times in {zone}"))
+    print()
+    for line in out.table(["ENTRY", "TASK", "SCHEDULE", "NEXT RUN", "LAST SENT"], rows):
+        print(line)
     return 0
 
 
@@ -375,18 +446,25 @@ def cmd_status(app: Potatoq, args: argparse.Namespace) -> int:
     if args.json:
         _print(workers, True)
         return 0
+    out = _out()
     if not workers:
-        print("No live workers")
+        print(out.line("workers", "No live workers", "yellow"))
         return 1
     now = time.time()
+    stale_after = 3 * float(app.conf.worker_heartbeat_interval)
+    rows = []
     for w in workers:
         age = now - float(w.get("heartbeat", now))
         processes, threads = w.get("concurrency") or 1, w.get("threads") or 1
-        concurrency = f"{processes * threads} ({processes} processes x {threads} threads)" if threads > 1 else processes
-        print(
-            f"{w['id']}: queues={','.join(w.get('queues', []))} concurrency={concurrency} "
-            f"running={len(w.get('running', []))} heartbeat={age:.0f}s ago"
-        )
+        concurrency = f"{processes * threads} ({processes}×{threads})" if threads > 1 else str(processes)  # noqa: RUF001
+        rows.append([
+            out.dot(age < stale_after) + w["id"], ",".join(w.get("queues", [])), concurrency,
+            str(len(w.get("running", []))), _ago(age),
+        ])  # fmt: skip
+    print(out.line("workers", f"{len(workers)} live", "green"))
+    print()
+    for line in out.table(["WORKER", "QUEUES", "CONCURRENCY", "RUNNING", "HEARTBEAT"], rows, "<<>>>"):
+        print(line)
     return 0
 
 
@@ -395,41 +473,63 @@ def cmd_queues(app: Potatoq, args: argparse.Namespace) -> int:
     if args.json:
         _print(sizes, True)
         return 0
-    for name, size in sorted(sizes.items()):
-        print(f"{name}: {size}")
+    out = _out()
     if not sizes:
-        print("All queues are empty")
+        print(out.line("queues", f"{out.icon('✨')}All queues are empty", "green"))
+        return 0
+    total = sum(sizes.values())
+    print(out.line("queues", f"{total} task{'s' if total != 1 else ''} waiting"))
+    print()
+    for line in out.table(["QUEUE", "WAITING"], [[n, str(c)] for n, c in sorted(sizes.items())], "<>"):
+        print(line)
     return 0
 
 
 def cmd_purge(app: Potatoq, args: argparse.Namespace) -> int:
+    out = _out()
     queues = [q for q in (args.queues or app.conf.task_default_queue).split(",") if q]
     if not args.force:
-        answer = input(f"Delete all waiting tasks in {', '.join(queues)}? [y/N] ")
+        answer = input(out.line("purge", f"Delete all waiting tasks in {', '.join(queues)}? [y/N] ", "yellow"))
         if answer.lower() not in ("y", "yes"):
             return 1
     for queue in queues:
-        print(f"{queue}: purged {app.broker.purge(queue)} tasks")
+        n = app.broker.purge(queue)
+        print(out.line("purged", f"{out.icon('🧹')}{n} task{'s' if n != 1 else ''} from {queue}", "green"))
     return 0
 
 
 def cmd_dead(app: Potatoq, args: argparse.Namespace) -> int:
+    out = _out()
     if args.dead_command == "retry":
         for task_id in args.task_ids:
-            ok = app.broker.requeue_dead(task_id)  # type: ignore[attr-defined]
-            print(f"{task_id}: {'requeued' if ok else 'not found'}")
+            if app.broker.requeue_dead(task_id):  # type: ignore[attr-defined]
+                print(out.line("requeued", f"{out.icon('🔁')}{task_id}", "green"))
+            else:
+                print(out.line("missing", f"{task_id} isn't in the dead letters", "red"))
         return 0
     limit = getattr(args, "limit", 20)
     entries = app.broker.dead_letters(limit)
     if getattr(args, "json", False):
         _print(entries, True)
         return 0
+    if not entries:
+        print(out.line("dead", f"{out.icon('🎉')}No dead-lettered tasks", "green"))
+        return 0
+    now = time.time()
+    rows = []
     for e in entries:
         reason = (e.get("reason") or "").strip().splitlines()
-        died = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(e["died_at"])) if e.get("died_at") else "?"
-        print(f"{e['id']}  {e['task']}  queue={e['queue']}  died={died}  {reason[-1] if reason else ''}")
-    if not entries:
-        print("No dead-lettered tasks")
+        why = reason[-1] if reason else ""
+        why = why if len(why) <= 70 else why[:69] + "…"
+        died = _ago(now - e["died_at"]) if e.get("died_at") else "?"
+        rows.append([out.style(str(e.get("task")), "bold"), str(e.get("id")), str(e.get("queue")), died, why])
+    n = len(entries)
+    print(out.line("dead", f"{out.icon('💀')}{n} dead-lettered task{'s' if n != 1 else ''}, newest first", "red"))
+    print()
+    for line in out.table(["TASK", "ID", "QUEUE", "DIED", "REASON"], rows):
+        print(line)
+    print()
+    print(out.line("tip", "Run one again with: potatoq dead retry <ID>", "grey"))
     return 0
 
 
@@ -441,23 +541,42 @@ def cmd_call(app: Potatoq, args: argparse.Namespace) -> int:
     result = app.send_task(
         args.name, json.loads(args.args), json.loads(args.kwargs), countdown=args.countdown, **options
     )
-    print(result.id)
+    out = _out()
+    if not out.pretty:
+        print(result.id)  # for scripts: just the id
+        return 0
+    queue = args.queue or app.route_for(args.name).get("queue") or app.conf.task_default_queue
+    when = f" in {_coarse(args.countdown)}" if args.countdown else ""
+    print(out.line("sent", f"{out.icon('📨')}{out.style(args.name, 'bold')} to {queue}{when}", "green"))
+    print(out.line("id", result.id))
     return 0
 
 
+_STATE_STYLES = {"SUCCESS": "green", "FAILURE": "red", "RETRY": "yellow", "REVOKED": "grey", "STARTED": "cyan"}
+
+
 def cmd_result(app: Potatoq, args: argparse.Namespace) -> int:
+    out = _out()
     result = app.AsyncResult(args.task_id)
     if args.wait is not None:
         try:
             value = result.get(timeout=args.wait, propagate=False)
         except Exception as exc:
-            print(f"{result.state}: {exc}")
+            print(out.line("state", out.style(result.state, _STATE_STYLES.get(result.state, "yellow"))))
+            print(out.line("error", str(exc), "red"))
             return 1
     else:
         value = result.result
-    print(f"{result.state}: {value!r}")
+    print(out.line("state", out.style(result.state, _STATE_STYLES.get(result.state, "cyan"), "bold")))
+    print(
+        out.line(
+            "error" if result.state == "FAILURE" else "result",
+            repr(value),
+            "red" if result.state == "FAILURE" else "cyan",
+        )
+    )
     if result.traceback:
-        print(result.traceback)
+        print(out.style(result.traceback.rstrip(), "dim"))
     return 0
 
 
@@ -465,25 +584,26 @@ def cmd_inspect(app: Potatoq, args: argparse.Namespace) -> int:
     destination = args.destination.split(",") if args.destination else None
     replies = getattr(app.control.inspect(destination=destination), args.what)()
     if not replies:
-        print("Error: No nodes replied.")
+        print(_out().line("error", "No workers replied (is a worker running? see potatoq status)", "red"))
         return 1
     print(json.dumps(replies, indent=2, default=str))
     return 0
 
 
 def cmd_migrate(app: Potatoq, args: argparse.Namespace) -> int:
-
+    out = _out()
     app.broker.setup()
-    print(f"Broker set up: {redact_url(app.broker.url)}")
+    print(out.line("broker", f"{out.icon('✅')}Set up {redact_url(app.broker.url)}", "green"))
     if app.backend is not None and app.backend is not app.broker:
         app.backend.setup()
-        print(f"Result backend set up: {redact_url(app.backend.url)}")
+        print(out.line("results", f"{out.icon('✅')}Set up {redact_url(app.backend.url)}", "green"))
     return 0
 
 
 def cmd_revoke(app: Potatoq, args: argparse.Namespace) -> int:
     app.control.revoke(args.task_ids)
-    print(f"Revoked {len(args.task_ids)} task(s)")
+    n = len(args.task_ids)
+    print(_out().line("revoked", f"{_out().icon('🚫')}{n} task{'s' if n != 1 else ''}", "green"))
     return 0
 
 

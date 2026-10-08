@@ -48,8 +48,7 @@ def test_start_sends_beat_init_and_logs_entries(memory_app, caplog):
     finally:
         signals.beat_init.disconnect(on_init)
     assert seen == [scheduler]
-    assert "Scheduler: r -> some.task (" in caplog.text
-    assert ", next run 20" in caplog.text and " UTC" in caplog.text
+    assert "r → some.task, every 1m, next run 20" in caplog.text and " UTC" in caplog.text
     assert "runs 'some.task', which isn't registered in this worker" in caplog.text
 
 

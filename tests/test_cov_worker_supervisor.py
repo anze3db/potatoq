@@ -183,6 +183,11 @@ def test_queues_given_as_comma_separated_string(app):
         s.selector.close()
 
 
+def banner(caplog) -> dict[str, str]:
+    """The banner's lines by gutter tag: {"broker": "redis://…", …}."""
+    return {r.potatoq_tag: r.getMessage() for r in caplog.records if getattr(r, "potatoq_tag", None)}
+
+
 def test_banner_warns_without_result_backend_on_foreign_settling_brokers(app, sup, caplog):
     app.conf.result_backend = "disabled"
     app.conf.broker_url = "memory://guest:secret@localhost"
@@ -191,36 +196,53 @@ def test_banner_warns_without_result_backend_on_foreign_settling_brokers(app, su
     sup.threads = 4
     with caplog.at_level(logging.INFO, logger="potatoq.worker"):
         sup._banner()
-    text = caplog.text
-    assert "memory://guest:***@localhost" in text and "secret" not in text
-    assert "results=disabled" in text
-    assert "concurrency=8 (2 processes x 4 threads)" in text
-    assert "requeues the other 3 task(s)" in text
-    assert "No result backend" in text
-    registered = next(line for line in text.splitlines() if "Registered tasks: " in line)
-    assert "cov.boom, cov.errback" in registered  # plus @shared_tasks other tests defined
+    lines = banner(caplog)
+    assert lines["potatoq"].startswith("Worker cov@host is ready (potatoq ")
+    assert lines["broker"] == "memory://guest:***@localhost" and "secret" not in caplog.text
+    assert lines["results"] == "disabled"
+    assert lines["workers"] == "8 = 2 processes × 4 threads"  # noqa: RUF001
+    assert lines["limits"] == "30m00s per task, new process every 1000 tasks"
+    assert "requeues the other 3 task(s)" in lines["note"]
+    assert lines["warning"].startswith("No result backend")
+    assert "cov.boom, cov.errback" in lines["tasks"]  # plus @shared_tasks other tests defined
 
 
 def test_banner_says_when_results_are_off_by_default(app, sup, caplog, monkeypatch):
     app.conf.task_ignore_result = True
     with caplog.at_level(logging.INFO, logger="potatoq.worker"):
         sup._banner()
-    assert "results=not stored by default (backend " in caplog.text
+    assert banner(caplog)["results"].startswith("not stored by default (backend ")
     caplog.clear()
     app.conf.task_ignore_result = None  # the default: Redis/RabbitMQ only store results when configured
     monkeypatch.setattr(app, "results_enabled_by_default", lambda: False)
     with caplog.at_level(logging.INFO, logger="potatoq.worker"):
         sup._banner()
-    assert "results=not stored by default (backend " in caplog.text
+    assert banner(caplog)["results"].startswith("not stored by default (backend ")
 
 
 def test_banner_without_tasks(sup, caplog):
     sup.app.tasks.clear()
+    sup.concurrency, sup.max_tasks_per_child = 1, None
+    sup.app.conf.task_soft_time_limit = 60
     with caplog.at_level(logging.INFO, logger="potatoq.worker"):
         sup._banner()
-    assert "Registered tasks: (none)" in caplog.text
-    assert "No result backend" not in caplog.text
-    assert "(prefork)" in caplog.text
+    lines = banner(caplog)
+    assert lines["tasks"] == "0 registered: none"
+    assert lines["workers"] == "1 process"
+    assert lines["limits"] == "30m00s per task (soft 1m00s)"
+    assert lines["schedule"] == "off"
+    assert "warning" not in lines
+
+
+def test_banner_lists_many_tasks_briefly(sup, caplog):
+    for i in range(8):
+        sup.app.task(name=f"cov.many{i}")(lambda: None)
+    sup.app.conf.task_time_limit = None
+    with caplog.at_level(logging.DEBUG, logger="potatoq.worker"):
+        sup._banner()
+    lines = banner(caplog)
+    assert "more)" in lines["tasks"] and lines["limits"].startswith("no time limit")
+    assert "Registered tasks: " in caplog.text  # the full list, at DEBUG
 
 
 # --- signals ---------------------------------------------------------------------------

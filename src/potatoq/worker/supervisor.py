@@ -169,8 +169,9 @@ class Supervisor:
         self._install_signals()
         if self.scheduler_enabled and app.conf.beat_schedule:
             self.scheduler = Scheduler(app)
-            self.scheduler.start()
         self._banner()
+        if self.scheduler is not None:
+            self.scheduler.start()  # lists the entries, after the banner
         # Children must not inherit our broker connections.
         broker.close()
         for index in range(self.concurrency):
@@ -195,36 +196,58 @@ class Supervisor:
 
     def _banner(self) -> None:
         from .. import __version__
+        from .executor import duration
 
-        broker_url = redact_url(self.app.broker.url)
-        backend = self.app.backend
+        app = self.app
+        conf = app.conf
+        backend = app.backend
         results = redact_url(backend.url) if backend else "disabled"
-        ignore = self.app.conf.task_ignore_result
-        if backend and (ignore or (ignore is None and not self.app.results_enabled_by_default())):
+        ignore = conf.task_ignore_result
+        if backend and (ignore or (ignore is None and not app.results_enabled_by_default())):
             # Tasks can still opt in with ignore_result=False.
             results = f"not stored by default (backend {results})"
-        logger.info(
-            "potatoq %s worker %s ready: broker=%s results=%s queues=%s concurrency=%d %s "
-            "time_limit=%ss max_tasks_per_child=%s scheduler=%s",
-            __version__, self.hostname, broker_url, results,
-            ",".join(self.queues), self.concurrency * self.threads,
-            f"({self.concurrency} processes x {self.threads} threads)" if self.threads > 1 else "(prefork)",
-            self.app.conf.task_time_limit, self.max_tasks_per_child, "on" if self.scheduler else "off",
-        )  # fmt: skip
         if self.threads > 1:
-            logger.info(
+            processes = f"{self.concurrency} process{'es' if self.concurrency != 1 else ''}"
+            workers = f"{self.concurrency * self.threads} = {processes} × {self.threads} threads"  # noqa: RUF001
+        else:
+            workers = f"{self.concurrency} process{'es' if self.concurrency != 1 else ''}"
+        hard, soft = conf.task_time_limit, conf.task_soft_time_limit
+        limits = f"{duration(hard)} per task" if hard else "no time limit"
+        if hard and soft:
+            limits += f" (soft {duration(soft)})"
+        if self.max_tasks_per_child:
+            limits += f", new process every {self.max_tasks_per_child} tasks"
+        tasks = sorted(n for n in app.tasks if not n.startswith("potatoq."))
+        shown = ", ".join(tasks[:6]) + (f", … ({len(tasks) - 6} more)" if len(tasks) > 6 else "")
+
+        def say(tag: str, text: str, *args: Any, level: int = logging.INFO, icon: str | None = None) -> None:
+            logger.log(level, text, *args, extra={"potatoq_tag": tag, "potatoq_icon": icon})
+
+        say("potatoq", "Worker %s is ready (potatoq %s)", self.hostname, __version__, icon="🥔")
+        say("broker", "%s", redact_url(app.broker.url))
+        say("results", "%s", results)
+        say("queues", "%s", ", ".join(self.queues))
+        say("workers", "%s", workers)
+        say("limits", "%s", limits)
+        n = len(self.scheduler.entries) if self.scheduler else 0
+        say("schedule", "%s", f"{n} periodic task{'s' if n != 1 else ''}" if n else "off")
+        say("tasks", "%d registered: %s", len(tasks), shown or "none")
+        logger.debug("Registered tasks: %s", ", ".join(tasks))
+        if self.threads > 1:
+            say(
+                "note",
                 "Threads: soft time limits interrupt a task at its next Python instruction (not inside a "
                 "blocking C call); a hard time limit kills the whole process and requeues the other %d task(s) "
                 "running in it.",
                 self.threads - 1,
             )
         if not self.consumer.can_settle_foreign and backend is None:
-            logger.warning(
+            say(
+                "warning",
                 "No result backend: tasks killed for exceeding their hard time limit will be redelivered by "
-                "RabbitMQ (up to task_max_deliveries times). Set result_backend to record them as failed instead."
+                "RabbitMQ (up to task_max_deliveries times). Set result_backend to record them as failed instead.",
+                level=logging.WARNING,
             )
-        tasks = sorted(n for n in self.app.tasks if not n.startswith("potatoq."))
-        logger.info("Registered tasks: %s", ", ".join(tasks) or "(none)")
 
     def _install_signals(self) -> None:
         os.set_blocking(self._wake_w, False)
@@ -247,7 +270,14 @@ class Supervisor:
 
     def _begin_shutdown(self, cold: bool) -> None:
         if not self.shutting_down:
-            logger.info("Warm shutdown: waiting up to %ss for running tasks", self.shutdown_timeout)
+            running = sum(len(c.running) for c in self.children.values())
+            if running:
+                logger.info(
+                    "Warm shutdown: waiting up to %gs for %d running task(s) (Ctrl+C again to stop now)",
+                    self.shutdown_timeout, running, extra={"potatoq_icon": "👋"},
+                )  # fmt: skip
+            else:
+                logger.info("Shutting down", extra={"potatoq_icon": "👋"})
             signals.worker_shutting_down.send(sender=self.hostname, sig="SIGTERM", how="Warm", exitcode=0)
             self.shutting_down = True
             self.shutdown_deadline = time.monotonic() + self.shutdown_timeout
@@ -255,7 +285,7 @@ class Supervisor:
                 self._kill(child, signal.SIGTERM)
                 child.term_sent = True
         if cold and not self.cold:
-            logger.info("Cold shutdown: interrupting running tasks")
+            logger.info("Cold shutdown: interrupting running tasks", extra={"potatoq_icon": "🛑"})
             self.cold = True
             self.shutdown_deadline = time.monotonic()
 
@@ -532,7 +562,7 @@ class Supervisor:
         except Exception:
             logger.exception("Could not unregister worker")
         signals.worker_shutdown.send(sender=self)
-        logger.info("Worker %s stopped", self.hostname)
+        logger.info("Worker %s stopped", self.hostname, extra={"potatoq_icon": "🥔"})
 
 
 def _to_handle(handle: Any) -> Any:

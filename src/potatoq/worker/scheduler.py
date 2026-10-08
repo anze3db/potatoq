@@ -61,6 +61,20 @@ def local_time(app: Potatoq, when: datetime) -> str:
     return f"{when.astimezone(tz):%Y-%m-%d %H:%M:%S} {app.conf.timezone or 'UTC'}"
 
 
+def describe_schedule(schedule: BaseSchedule) -> str:
+    """``0 3 * * *`` for a crontab (standard field order), ``every 30s`` for an interval."""
+    if isinstance(schedule, crontab):
+        minute, hour, day_of_week, day_of_month, month = schedule._orig
+        return f"{minute} {hour} {day_of_month} {month} {day_of_week}"
+    seconds = getattr(schedule, "seconds", None)
+    if seconds is None:
+        return repr(schedule)
+    for unit, size in (("d", 86400), ("h", 3600), ("m", 60)):
+        if seconds >= size and seconds % size == 0:
+            return f"every {int(seconds // size)}{unit}"
+    return f"every {seconds:g}s"
+
+
 def describe(app: Potatoq, entries: list[Entry], now: datetime | None = None) -> list[tuple[Entry, str]]:
     """Each entry with its next fire time in the app's timezone, e.g. ``2026-10-09 10:00 America/Chicago``."""
     now = now or datetime.now(UTC)
@@ -93,12 +107,15 @@ class Scheduler:
     def start(self) -> None:
         signals.beat_init.send(sender=self)
         for entry, next_run in describe(self.app, self.entries):
-            logger.info("Scheduler: %s -> %s (%r), next run %s", entry.name, entry.task, entry.schedule, next_run)
+            logger.info(
+                "%s → %s, %s, next run %s", entry.name, entry.task, describe_schedule(entry.schedule), next_run,
+                extra={"potatoq_tag": "schedule"},
+            )  # fmt: skip
             if entry.task not in self.app.tasks:
                 logger.warning(
-                    "Scheduler: %s runs %r, which isn't registered in this worker. If that's a typo, "
+                    "%s runs %r, which isn't registered in this worker. If that's a typo, "
                     "every run will be dead-lettered.",
-                    entry.name, entry.task,
+                    entry.name, entry.task, extra={"potatoq_tag": "schedule"},
                 )  # fmt: skip
 
     def tick(self, now: datetime | None = None) -> int:
@@ -145,7 +162,7 @@ class Scheduler:
         message = task.build_message(list(entry.args), dict(entry.kwargs), **options)
         claimed = app.broker.enqueue_periodic(entry.name, fire_at.timestamp(), message)
         if claimed:
-            logger.info("Scheduler: sending due task %s (%s)", entry.name, entry.task)
+            logger.info("Sent periodic task %s (%s)", entry.name, entry.task, extra={"potatoq_icon": "⏰"})
         return claimed
 
     def seconds_until_next(self, now: datetime | None = None) -> float:

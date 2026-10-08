@@ -29,8 +29,11 @@ Check what will run, and when:
 
 ```console
 $ potatoq -A proj schedule
-nightly-report: reports.build <crontab: 0 3 * * * (m/h/dM/MY/d)> next=2026-10-09 03:00:00 Europe/Ljubljana
-ping: monitoring.ping <schedule: every 30s> next=2026-10-08 16:41:30 Europe/Ljubljana
+   schedule   ⏰ 2 periodic tasks, times in Europe/Ljubljana
+
+              ENTRY            TASK              SCHEDULE    NEXT RUN                         LAST SENT
+              nightly-report   reports.build     0 3 * * *   2026-10-10 03:00:00 (in 13h00m)  11h ago
+              ping             monitoring.ping   every 30s   2026-10-09 14:00:30 (in 12s)     18s ago
 ```
 
 Workers log the same list when they start, and warn about entries whose task isn't

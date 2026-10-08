@@ -21,7 +21,7 @@ import potatoq
 from potatoq import Potatoq, serialization, signals
 from potatoq.config import Settings, load_object, normalize_key
 from potatoq.exceptions import RemoteError, Retry
-from potatoq.log import TaskContextFilter, TaskFormatter, get_logger, get_task_logger, setup_logging
+from potatoq.log import PotatoqFormatter, TaskContextFilter, TaskFormatter, get_logger, get_task_logger, setup_logging
 from potatoq.message import Message
 from potatoq.schedules import crontab, maybe_schedule, schedule
 from potatoq.testing import _next_scheduled, drain
@@ -218,7 +218,8 @@ def test_setup_logging_adds_a_handler_when_none_is_configured(app, tmp_path):
             setup_logging(app, "warning", str(tmp_path / "worker.log"))
             [handler] = root.handlers
             assert isinstance(handler, logging.FileHandler)
-            assert isinstance(handler.formatter, TaskFormatter)
+            assert isinstance(handler.formatter, PotatoqFormatter)
+            assert not handler.formatter.pretty and not handler.formatter.paint.color  # a file
             assert root.level == logging.WARNING
             assert logging.getLogger("pika").level == logging.CRITICAL
     finally:
