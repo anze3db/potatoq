@@ -70,12 +70,12 @@ def setup_logging(app: Any, loglevel: str | int = "INFO", logfile: str | None = 
     hijack = app.conf.worker_hijack_root_logger
     if root.handlers and not hijack:
         logging.getLogger("potatoq").setLevel(loglevel)
-        for handler in root.handlers:
-            handler.addFilter(TaskContextFilter())
+        for existing in root.handlers:
+            existing.addFilter(TaskContextFilter())
         return
     if hijack:
-        for handler in list(root.handlers):
-            root.removeHandler(handler)
+        for existing in list(root.handlers):
+            root.removeHandler(existing)
     handler: logging.Handler = logging.FileHandler(logfile) if logfile else logging.StreamHandler(sys.stderr)
     handler.addFilter(TaskContextFilter())
     handler.setFormatter(TaskFormatter(app.conf.worker_log_format, app.conf.worker_task_log_format))

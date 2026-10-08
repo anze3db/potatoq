@@ -33,7 +33,7 @@ class AsyncResult:
         backend: Any = None,
         task_name: str | None = None,
         app: Potatoq | None = None,
-        parent: AsyncResult | None = None,
+        parent: Any = None,
         ignored: bool = False,
     ):
         if app is None:
@@ -264,7 +264,17 @@ class EagerResult(AsyncResult):
         return self._traceback
 
     def get(
-        self, timeout: float | None = None, propagate: bool = True, disable_sync_subtasks: bool = True, **kwargs: Any
+        self,
+        timeout: float | None = None,
+        propagate: bool = True,
+        interval: float = 0.5,
+        no_ack: bool = True,
+        follow_parents: bool = True,
+        callback: Any = None,
+        on_message: Any = None,
+        on_interval: Any = None,
+        disable_sync_subtasks: bool = True,
+        **kwargs: Any,
     ) -> Any:
         if propagate and self._state in states.PROPAGATE_STATES and isinstance(self._value, BaseException):
             raise self._value

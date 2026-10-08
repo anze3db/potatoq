@@ -28,7 +28,7 @@ class BaseSchedule:
 
     def fire_times_between(self, start: datetime, end: datetime, limit: int = 1000) -> list[datetime]:
         """All fire times in ``(start, end]``."""
-        times = []
+        times: list[datetime] = []
         t = self.next_after(start)
         while t <= end and len(times) < limit:
             times.append(t)

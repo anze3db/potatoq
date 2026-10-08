@@ -186,9 +186,9 @@ def signature_to_messages(app: Potatoq, sig: Signature, args: tuple[Any, ...], p
             )  # fmt: skip
         return msgs
     targs, tkwargs, topts = sig._merge(None, None, None)
-    task = app.tasks.get(sig.task)
+    target = app.tasks.get(sig.task)
     task_id = topts.pop("task_id", None)
-    if task is None:
+    if target is None:
         msg = Message(
             task=sig.task,
             args=list(targs),
@@ -204,7 +204,9 @@ def signature_to_messages(app: Potatoq, sig: Signature, args: tuple[Any, ...], p
     link = topts.pop("link", None)
     link_error = topts.pop("link_error", None)
     return [
-        task.build_message(list(targs), tkwargs, task_id, link=link, link_error=link_error, **{**parent_opts, **topts})
+        target.build_message(
+            list(targs), tkwargs, task_id, link=link, link_error=link_error, **{**parent_opts, **topts}
+        )
     ]
 
 

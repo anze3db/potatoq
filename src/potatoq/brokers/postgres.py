@@ -122,6 +122,13 @@ def _normalize_url(url: str) -> str:
     return "postgresql://" + url.split("://", 1)[1]
 
 
+def _scalar(cursor: Any) -> Any:
+    """First column of the one row a statement must return."""
+    row = cursor.fetchone()
+    assert row is not None
+    return row[0]
+
+
 def _channel(queue: str) -> str:
     name = f"potatoq:{queue}"
     if len(name) > 63:
@@ -279,12 +286,12 @@ class PostgresBroker(Broker):
             row = self._rows(messages)[0]
             notify = self.notify and message.eta is None and self._queues_to_notify(messages)
             if notify:
-                sql = self._sql(
+                notify_sql = self._sql(
                     "WITH ins AS (INSERT INTO {jobs} (id, queue, task, state, priority, run_at, payload) "
                     "VALUES (%s, %s, %s, %s, %s, coalesce(to_timestamp(%s), now()), %s) ON CONFLICT (id) DO NOTHING "
                     "RETURNING queue) SELECT pg_notify(%s, '') FROM ins"
                 )
-                self._run(lambda conn: conn.execute(sql, (*row, _channel(message.queue))))
+                self._run(lambda conn: conn.execute(notify_sql, (*row, _channel(message.queue))))
             else:
                 self._run(lambda conn: conn.execute(self._insert_sql, row))
             return
@@ -387,7 +394,7 @@ class PostgresBroker(Broker):
             for job_id, n, token, payload in rows
         ]
 
-    def recover(self, worker_dead_after: float) -> list[Delivery]:  # type: ignore[override]
+    def recover(self, worker_dead_after: float) -> list[Delivery]:
         limit = int(self.app.conf.task_max_deliveries)
         live = "(SELECT id FROM {workers} WHERE heartbeat >= now() - make_interval(secs => %(after)s))"
 
@@ -454,7 +461,7 @@ class PostgresBroker(Broker):
 
         def _maintain(conn: psycopg.Connection) -> None:
             with conn.transaction():
-                if not conn.execute("SELECT pg_try_advisory_xact_lock(%s)", (_LOCK_MAINTENANCE,)).fetchone()[0]:
+                if not _scalar(conn.execute("SELECT pg_try_advisory_xact_lock(%s)", (_LOCK_MAINTENANCE,))):
                     return  # another node is doing it
                 conn.execute(
                     self._sql(
@@ -494,16 +501,20 @@ class PostgresBroker(Broker):
                 )
                 if inserted:
                     # The row lock serializes concurrent finishers; exactly one sees 0.
-                    remaining = conn.execute(
-                        self._sql(
-                            "UPDATE {chords} SET remaining = remaining - 1 WHERE group_id = %s RETURNING remaining"
-                        ),
-                        (group_id,),
-                    ).fetchone()[0]
+                    remaining = _scalar(
+                        conn.execute(
+                            self._sql(
+                                "UPDATE {chords} SET remaining = remaining - 1 WHERE group_id = %s RETURNING remaining"
+                            ),
+                            (group_id,),
+                        )
+                    )
                 else:
-                    remaining = conn.execute(
-                        self._sql("SELECT remaining FROM {chords} WHERE group_id = %s FOR UPDATE"), (group_id,)
-                    ).fetchone()[0]
+                    remaining = _scalar(
+                        conn.execute(
+                            self._sql("SELECT remaining FROM {chords} WHERE group_id = %s FOR UPDATE"), (group_id,)
+                        )
+                    )
                 if remaining > 0:
                     return None
                 rows = conn.execute(

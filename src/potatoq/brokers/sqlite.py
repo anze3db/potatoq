@@ -281,7 +281,7 @@ class SQLiteBroker(Broker):
             out.append(Delivery(Message.decode(payload), delivery_count=deliveries, handle=(job_id, token)))
         return out
 
-    def recover(self, worker_dead_after: float) -> list[Delivery]:  # type: ignore[override]
+    def recover(self, worker_dead_after: float) -> list[Delivery]:
         """Requeue tasks of dead nodes; return those that exhausted their deliveries."""
         cutoff = time.time() - worker_dead_after
         limit = int(self.app.conf.task_max_deliveries)

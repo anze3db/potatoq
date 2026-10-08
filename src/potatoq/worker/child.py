@@ -285,11 +285,11 @@ class Child:
             }
         )
         is_async = task is not None and inspect.iscoroutinefunction(getattr(task.run, "__func__", task.run))
-        use_alarm = soft and not is_async and self.threads == 1
+        use_alarm = bool(soft) and not is_async and self.threads == 1
         slot.task_id = message.id
         slot.soft_fired = False
         slot.soft_deadline = time.monotonic() + soft if soft and not is_async and self.threads > 1 else None
-        if use_alarm:
+        if use_alarm and soft:
             signal.setitimer(signal.ITIMER_REAL, soft)
         try:
             outcome = executor.execute(app, message, delivery_count=delivery.delivery_count, hostname=self.hostname)

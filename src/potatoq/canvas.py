@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self, cast
 
 from .message import new_id
 
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 __all__ = ["Signature", "chain", "chord", "group", "maybe_signature", "signature", "subtask", "xmap", "xstarmap"]
 
 
-class Signature(dict):  # type: ignore[type-arg]
+class Signature(dict):
     """A serializable description of a task call (task name, args, kwargs, options)."""
 
     def __init__(
@@ -83,7 +83,7 @@ class Signature(dict):  # type: ignore[type-arg]
         return target._from_dict(d, app)  # type: ignore[attr-defined]
 
     @classmethod
-    def _from_dict(cls, d: dict[str, Any], app: Potatoq | None = None) -> Signature:
+    def _from_dict(cls, d: dict[str, Any], app: Potatoq | None = None) -> Self:
         sig = cls.__new__(cls)
         dict.__init__(sig, d)
         sig._app = app
@@ -211,7 +211,8 @@ def signature(varies: Any, *args: Any, **kwargs: Any) -> Signature:
         if isinstance(varies, Signature):
             return varies.clone()
         return Signature.from_dict(varies, app=app)
-    return Signature(varies, *args, app=app, **kwargs)
+    kwargs["app"] = app
+    return Signature(varies, *args, **kwargs)
 
 
 subtask = signature
@@ -256,7 +257,9 @@ class _chain(Signature):
     def tasks(self) -> list[Signature]:
         return [maybe_signature(t, self._app) for t in self["kwargs"]["tasks"]]  # type: ignore[misc]
 
-    def apply_async(self, args: Any = None, kwargs: dict[str, Any] | None = None, **options: Any) -> AsyncResult:
+    def apply_async(
+        self, args: Any = None, kwargs: dict[str, Any] | None = None, route_name: Any = None, **options: Any
+    ) -> AsyncResult:
         if self.app.conf.task_always_eager:
             return self.apply(args, kwargs, **options)
         steps = self._prepare_steps(args, kwargs)
@@ -325,7 +328,7 @@ class _chain(Signature):
         return " | ".join(repr(t) for t in self.tasks)
 
 
-class _EagerList(list):  # type: ignore[type-arg]
+class _EagerList(list):
     def get(self, **kwargs: Any) -> list[Any]:
         return [r.get(**kwargs) for r in self]
 
@@ -358,7 +361,7 @@ class group(Signature):
     def tasks(self) -> list[Signature]:
         return [maybe_signature(t, self._app) for t in self["kwargs"]["tasks"]]  # type: ignore[misc]
 
-    def __iter__(self) -> Any:  # type: ignore[override]
+    def __iter__(self) -> Any:
         return iter(self.tasks)
 
     def __len__(self) -> int:
@@ -381,15 +384,17 @@ class group(Signature):
     def id(self) -> str | None:
         return self["options"].get("task_id")
 
-    def clone(self, args: Any = None, kwargs: dict[str, Any] | None = None, **opts: Any) -> group:  # type: ignore[override]
+    def clone(self, args: Any = None, kwargs: dict[str, Any] | None = None, **opts: Any) -> group:
         g = group._from_dict(copy.deepcopy(dict(self)), self._app)
         if args or kwargs:
             g["kwargs"]["tasks"] = [t.clone(args, kwargs) for t in g.tasks]
-        return g  # type: ignore[return-value]
+        return g
 
-    def apply_async(self, args: Any = None, kwargs: dict[str, Any] | None = None, **options: Any) -> GroupResult:  # type: ignore[override]
+    def apply_async(  # type: ignore[override]
+        self, args: Any = None, kwargs: dict[str, Any] | None = None, route_name: Any = None, **options: Any
+    ) -> GroupResult:
         if self.app.conf.task_always_eager:
-            return self.apply(args, kwargs, **options)  # type: ignore[return-value]
+            return self.apply(args, kwargs, **options)
         g = self.clone(args, kwargs)
         result = g.freeze()
         messages = []
@@ -406,7 +411,7 @@ class group(Signature):
             self.app.publish(messages)
         return result
 
-    def __call__(self, *partial_args: Any, **options: Any) -> GroupResult:  # type: ignore[override]
+    def __call__(self, *partial_args: Any, **options: Any) -> GroupResult:
         return self.apply_async(partial_args, **options)
 
     def apply(self, args: Any = None, kwargs: dict[str, Any] | None = None, **options: Any) -> Any:
@@ -447,9 +452,9 @@ class _chord(Signature):
         if body is not None and not isinstance(body, Signature):
             body = maybe_signature(body, self._app)
             self["kwargs"]["body"] = body
-        return body
+        return cast(Signature, body)  # None until chord(header)(body)
 
-    def __call__(self, body: Any = None, **options: Any) -> AsyncResult:  # type: ignore[override]
+    def __call__(self, body: Any = None, **options: Any) -> AsyncResult:
         if body is not None:
             self["kwargs"]["body"] = maybe_signature(body, self._app)
         return self.apply_async(**options)
@@ -469,13 +474,15 @@ class _chord(Signature):
     def id(self) -> str | None:
         return self.body.id if self.body is not None else None
 
-    def clone(self, args: Any = None, kwargs: dict[str, Any] | None = None, **opts: Any) -> _chord:  # type: ignore[override]
+    def clone(self, args: Any = None, kwargs: dict[str, Any] | None = None, **opts: Any) -> _chord:
         c = _chord._from_dict(copy.deepcopy(dict(self)), self._app)
         if args or kwargs:
             c["kwargs"]["header"] = [t.clone(args, kwargs) for t in c.tasks]
-        return c  # type: ignore[return-value]
+        return c
 
-    def apply_async(self, args: Any = None, kwargs: dict[str, Any] | None = None, **options: Any) -> AsyncResult:
+    def apply_async(
+        self, args: Any = None, kwargs: dict[str, Any] | None = None, route_name: Any = None, **options: Any
+    ) -> AsyncResult:
         if self.body is None:
             raise ValueError("chord needs a body (callback)")
         if self.app.conf.task_always_eager:

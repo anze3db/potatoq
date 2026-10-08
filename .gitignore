@@ -17,3 +17,7 @@ target/
 .venv315/
 site/
 .venv-*/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml

@@ -50,6 +50,7 @@ class Context:
     callbacks: Any = None
     errbacks: Any = None
     origin: str | None = None
+    started_at: float | None = None
 
     @property
     def correlation_id(self) -> str | None:
@@ -312,7 +313,7 @@ class Task:
 
         from .canvas import signatures_to_list
 
-        overrides = {
+        overrides: dict[str, Any] = {
             k: options.pop(k)
             for k in ("time_limit", "soft_time_limit", "max_retries", "retry_policy_delay")
             if k in options and options[k] is not None
@@ -534,7 +535,10 @@ class Task:
         request = self.request
         if request.called_directly or request.message is None:
             raise RuntimeError("replace() only works inside a running task")
-        sig = maybe_signature(sig, self.app).clone()
+        sig = maybe_signature(sig, self.app)
+        if sig is None:
+            raise TypeError("replace() needs a signature")
+        sig = sig.clone()
         message = request.message
         sig.set(task_id=request.id)
         if message.link:

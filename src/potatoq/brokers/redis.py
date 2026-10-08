@@ -314,6 +314,11 @@ def _client_from_url(url: str, timeout: float, **options: Any) -> redis.Redis:
     return redis.Redis.from_url(url, **kwargs)
 
 
+def _s(value: Any) -> str:
+    """redis-py returns bytes (or str with decode_responses=True)."""
+    return value.decode() if isinstance(value, bytes) else str(value)
+
+
 class RedisBroker(Broker):
     schemes = ("redis", "rediss", "valkey", "unix")
     supports_results = True
@@ -406,7 +411,10 @@ class RedisBroker(Broker):
         results = pipe.execute()
         if record.ready and results[-1]:
             notify = f"{self.prefix}:notify:{record.task_id}"
-            self.client.pipeline(transaction=False).rpush(notify, 1).pexpire(notify, 60000).execute()
+            pipe = self.client.pipeline(transaction=False)
+            pipe.rpush(notify, 1)
+            pipe.pexpire(notify, 60000)
+            pipe.execute()
 
     def get_result(self, task_id: str) -> ResultRecord | None:
         data = self.client.get(f"{self.prefix}:result:{task_id}")
@@ -452,7 +460,7 @@ class RedisBroker(Broker):
 
     def workers(self) -> list[dict[str, Any]]:
         raw = self.client.hgetall(f"{self.prefix}:workers")
-        return sorted(({"id": k.decode(), **json.loads(v)} for k, v in raw.items()), key=lambda w: w["id"])
+        return sorted(({"id": _s(k), **json.loads(v)} for k, v in raw.items()), key=lambda w: w["id"])
 
     def lease_ms(self) -> int:
         return int(float(self.app.conf.worker_dead_after) * 1000)
@@ -465,9 +473,9 @@ class RedisBroker(Broker):
             self.run("extend", self.lease_ms(), *args)
 
     def _queues(self) -> list[str]:
-        return [q.decode() for q in self.client.smembers(f"{self.prefix}:queues")]
+        return [_s(q) for q in self.client.smembers(f"{self.prefix}:queues")]
 
-    def recover(self, worker_dead_after: float) -> list[Delivery]:  # type: ignore[override]
+    def recover(self, worker_dead_after: float) -> list[Delivery]:
         dead: list[Delivery] = []
         limit = int(self.app.conf.task_max_deliveries)
         for queue in self._queues():
@@ -519,7 +527,7 @@ class RedisBroker(Broker):
             if ids:
                 pipe = client.pipeline()
                 pipe.delete(key)
-                pipe.delete(*[f"{self.prefix}:job:{i.decode()}" for i in ids])
+                pipe.delete(*[f"{self.prefix}:job:{_s(i)}" for i in ids])
                 pipe.execute()
                 n += len(ids)
         return n
@@ -528,7 +536,7 @@ class RedisBroker(Broker):
         ids = self.client.zrevrange(f"{self.prefix}:dead", 0, limit - 1)
         pipe = self.client.pipeline(transaction=False)
         for i in ids:
-            pipe.hmget(f"{self.prefix}:job:{i.decode()}", "q", "p", "r", "died")
+            pipe.hmget(f"{self.prefix}:job:{_s(i)}", "q", "p", "r", "died")
         out = []
         for job_id, (queue, payload, reason, died) in zip(ids, pipe.execute(), strict=True):
             if payload is None:
@@ -536,10 +544,10 @@ class RedisBroker(Broker):
             message = serialization.loads(payload)
             out.append(
                 {
-                    "id": job_id.decode(),
-                    "queue": (queue or b"").decode(),
+                    "id": _s(job_id),
+                    "queue": _s(queue or b""),
                     "task": message.get("task"),
-                    "reason": (reason or b"").decode(),
+                    "reason": _s(reason or b""),
                     "died_at": int(died or 0) / 1000,
                     "message": message,
                 }

@@ -57,7 +57,7 @@ def _default(obj: Any) -> Any:
     )
 
 
-_DECODERS = {
+_DECODERS: dict[str, Any] = {
     "datetime": dt.datetime.fromisoformat,
     "date": dt.date.fromisoformat,
     "time": dt.time.fromisoformat,

@@ -171,7 +171,7 @@ class PotatoqBackend(BaseTaskBackend):
             app._task_resolvers.append(self._resolve)
 
     @property
-    def supports_get_result(self) -> bool:  # type: ignore[override]
+    def supports_get_result(self) -> bool:
         return self.app.backend is not None
 
     # --- registration ----------------------------------------------------------------

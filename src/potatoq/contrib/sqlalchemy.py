@@ -100,7 +100,7 @@ def _broker_matches(broker: Any, session: Session) -> bool:
     if not getattr(broker, "transactional", False):
         return False
     try:
-        url = session.get_bind().url
+        url = session.get_bind().engine.url
     except Exception:
         return False
     from .django import _canonical

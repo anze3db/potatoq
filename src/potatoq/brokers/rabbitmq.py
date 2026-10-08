@@ -23,6 +23,7 @@ Design (research in docs/backends.md):
 
 from __future__ import annotations
 
+import functools
 import logging
 import math
 import os
@@ -426,7 +427,7 @@ class RabbitMQBroker(Broker):
         return sorted(out, key=lambda e: -e["died_at"])[:limit]
 
     def requeue_dead(self, task_id: str) -> bool:
-        found = []
+        found: list[Message] = []
 
         def visit(ch: Any, method: Any, props: Any, body: bytes) -> bool:
             if found or (props.message_id != task_id):
@@ -556,7 +557,7 @@ class RabbitMQConsumer(Consumer):
             if len(self.queues) > 1:
                 # Stop the other queues from handing us messages we can't run yet.
                 try:
-                    self._call(lambda keep=name: self._pause_others(keep))
+                    self._call(functools.partial(self._pause_others, name))
                 except AMQPError:
                     pass
             headers = props.headers or {}
@@ -565,7 +566,7 @@ class RabbitMQConsumer(Consumer):
                 message = Message.decode(body)
             except Exception:
                 logger.exception("Undecodable message in %s; dead-lettering it", name)
-                self._call(lambda tag=method.delivery_tag: self._ch.basic_reject(tag, requeue=False))
+                self._call(functools.partial(self._ch.basic_reject, method.delivery_tag, requeue=False))
                 continue
             return Delivery(message, delivery_count=count, handle=method.delivery_tag)
 
@@ -575,7 +576,7 @@ class RabbitMQConsumer(Consumer):
                 self._ch.basic_cancel(tag)
                 self._paused.add(name)
         # Give back anything the paused consumers already delivered.
-        leftovers = deque()
+        leftovers: deque[tuple[str, Any, Any, bytes]] = deque()
         while True:
             try:
                 leftovers.append(self._inbox.get_nowait())

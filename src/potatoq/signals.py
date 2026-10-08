@@ -46,7 +46,7 @@ def _make_ref(receiver: Callable[..., Any], weak: bool) -> Any:
     if not weak:
         return lambda: receiver
     if hasattr(receiver, "__self__") and hasattr(receiver, "__func__"):
-        return weakref.WeakMethod(receiver)  # type: ignore[arg-type]
+        return weakref.WeakMethod(receiver)
     return weakref.ref(receiver)
 
 

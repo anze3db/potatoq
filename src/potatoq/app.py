@@ -20,6 +20,7 @@ from .config import Settings, load_object
 from .exceptions import ImproperlyConfigured, NotRegistered, ResultBackendDisabled
 from .message import Message
 from .task import Context, Task
+from .task import Task as BaseTask
 
 if TYPE_CHECKING:
     from .brokers.base import Broker, ResultRecord
@@ -77,7 +78,7 @@ class Potatoq:
     under Django, or a local SQLite file for development.
     """
 
-    Task: type[Task] = Task
+    Task: type[BaseTask] = BaseTask
 
     def __init__(
         self,
@@ -88,7 +89,7 @@ class Potatoq:
         include: Iterable[str] | None = None,
         config_source: Any = None,
         set_as_current: bool = True,
-        task_cls: type[Task] | str | None = None,
+        task_cls: type[BaseTask] | str | None = None,
         namespace: str | None = None,
         autofinalize: bool = True,
         **kwargs: Any,
@@ -100,7 +101,7 @@ class Potatoq:
         self._broker: Broker | None = None
         self._backend: Broker | bool | None = False  # False = not resolved yet
         self._transaction_hooks: list[Any] = []
-        self._task_resolvers: list[Callable[[str], Task | None]] = []
+        self._task_resolvers: list[Callable[[str], BaseTask | None]] = []
         self._autodiscover: list[tuple[Any, str]] = []
         self._finalized = False
         self._pid = os.getpid()
@@ -176,7 +177,7 @@ class Potatoq:
     def task(self, *args: Any, **opts: Any) -> Any:
         """Decorator: ``@app.task`` or ``@app.task(bind=True, ...)``."""
 
-        def decorator(fun: Callable[..., Any]) -> Task:
+        def decorator(fun: Callable[..., Any]) -> BaseTask:
             return self._task_from_fun(fun, **opts)
 
         if len(args) == 1 and callable(args[0]) and not opts:
@@ -187,7 +188,7 @@ class Potatoq:
 
     def _task_from_fun(
         self, fun: Callable[..., Any], name: str | None = None, base: Any = None, bind: bool = False, **options: Any
-    ) -> Task:
+    ) -> BaseTask:
         name = name or self.gen_task_name(fun.__name__, fun.__module__)
         if name in self.tasks and getattr(self.tasks[name], "__wrapped__", None) is fun:
             return self.tasks[name]
@@ -232,7 +233,7 @@ class Potatoq:
         self.tasks.register(task)
         return task
 
-    def resolve_task(self, name: str) -> Task | None:
+    def resolve_task(self, name: str) -> BaseTask | None:
         """The registered task ``name``, or one an integration can load on demand
         (e.g. a ``django.tasks`` task whose module the worker hasn't imported yet)."""
         task = self.tasks.get(name)
@@ -249,9 +250,10 @@ class Potatoq:
             module = self.main
         return f"{module}.{name}"
 
-    def register_task(self, task: Task | type[Task], **options: Any) -> Task:
+    def register_task(self, task: BaseTask | type[BaseTask], **options: Any) -> BaseTask:
         if isinstance(task, type):
             task = task()
+        assert isinstance(task, BaseTask)
         if task.app is None:
             task.app = self
         if not task.name:
@@ -597,11 +599,11 @@ class Potatoq:
         return req if req.id else None
 
     @property
-    def current_task(self) -> Task | None:
+    def current_task(self) -> BaseTask | None:
         return getattr(_state, "current_task", None)
 
     @property
-    def current_worker_task(self) -> Task | None:
+    def current_worker_task(self) -> BaseTask | None:
         return self.current_task
 
     # --- worker ------------------------------------------------------------------
@@ -614,7 +616,7 @@ class Potatoq:
     def worker_main(self, argv: list[str] | None = None) -> None:
         from .cli import main
 
-        main(["-A", self, *(argv or ["worker"])])  # type: ignore[list-item]
+        main(["-A", self, *(argv or ["worker"])])
 
     start = worker_main
 

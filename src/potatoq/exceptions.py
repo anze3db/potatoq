@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 from datetime import datetime
 from typing import Any
 
@@ -86,7 +87,7 @@ class Reject(TaskError):
         super().__init__(reason, requeue)
 
 
-class TimeoutError(PotatoqError, TimeoutError):
+class TimeoutError(PotatoqError, builtins.TimeoutError):
     """Waiting for a result timed out."""
 
 
