@@ -29,11 +29,36 @@ def test_next_version(tags, today, expected):
     assert release.next_version(tags, today) == expected
 
 
+@pytest.mark.parametrize(
+    ("tags", "pre", "expected"),
+    [
+        ([], True, "26.1a1"),  # the very first release is an alpha
+        (["26.1a1"], True, "26.1a2"),
+        (["26.1a1", "26.1a2"], False, "26.1"),  # a final finishes the alpha line
+        (["26.1a1", "26.1"], True, "26.2a1"),
+        (["26.1a1", "26.1"], False, "26.2"),
+        (["26.1", "26.2a1"], False, "26.2"),
+        (["26.1a9", "26.1a10"], True, "26.1a11"),  # numeric, not lexical
+    ],
+)
+def test_next_version_prereleases(tags, pre, expected):
+    assert release.next_version(tags, D, pre=pre) == expected
+
+
+def test_is_prerelease():
+    assert release.is_prerelease("26.1a1")
+    assert not release.is_prerelease("26.1")
+
+
 def test_previous_version():
     tags = ["25.9", "26.1", "26.2", "26.10"]
     assert release.previous_version(tags, "26.11") == "26.10"
     assert release.previous_version(tags, "26.1") == "25.9"
     assert release.previous_version([], "26.1") is None
+    alphas = ["26.1a1", "26.1a2"]
+    assert release.previous_version(alphas, "26.1") == "26.1a2"  # the final's notes cover the last alpha
+    assert release.previous_version(alphas, "26.1a2") == "26.1a1"
+    assert release.previous_version(alphas, "26.1a1") is None
 
 
 GENERATED = """## What's Changed

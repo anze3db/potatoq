@@ -2,10 +2,12 @@
 
     uv run scripts/release.py prepare            # open a "Release 26.N" PR (needs `gh`)
     uv run scripts/release.py prepare --dry-run  # print the changelog section, change nothing
+    uv run scripts/release.py prepare --pre      # an alpha instead: 26.3a1, 26.3a2, ...
     uv run scripts/release.py next-version       # e.g. 26.3
     uv run scripts/release.py notes 26.2         # the CHANGELOG.md section for a release
 
 Versions are CalVer ``YY.N``: the Nth release of the year (26.1, 26.2, ... 27.1).
+Alphas are PEP 440 pre-releases of the upcoming number: 26.1a1, 26.1a2, then 26.1.
 
 Release notes come from GitHub's generator: merged PR titles grouped by label
 (.github/release.yml), new contributors and a compare link. This script adds the
@@ -29,29 +31,46 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CHANGELOG = ROOT / "CHANGELOG.md"
 PYPROJECT = ROOT / "pyproject.toml"
-VERSION_RE = re.compile(r"^(\d{2})\.(\d+)$")
+#: YY.N, optionally a pre-release YY.NaM (PEP 440 alpha: 26.1a1, 26.1a2, then 26.1).
+VERSION_RE = re.compile(r"^(\d{2})\.(\d+)(?:a(\d+))?$")
 BOTS = re.compile(r"(\[bot\]$|^dependabot|^github-actions|^renovate)", re.I)
 
 
 # --- pure functions (unit tested) -------------------------------------------------
 
 
-def next_version(existing: list[str], today: dt.date) -> str:
-    """The next CalVer version after ``existing`` tags/versions for ``today``'s year."""
+def _key(version: str) -> tuple[int, int, float]:
+    """Sort key: 26.1a1 < 26.1a2 < 26.1 < 26.2a1 < 26.2."""
+    m = VERSION_RE.match(version)
+    if not m:
+        return (-1, -1, -1)
+    return (int(m[1]), int(m[2]), int(m[3]) if m[3] else float("inf"))
+
+
+def is_prerelease(version: str) -> bool:
+    m = VERSION_RE.match(version)
+    return bool(m and m[3])
+
+
+def next_version(existing: list[str], today: dt.date, pre: bool = False) -> str:
+    """The next CalVer version after ``existing`` tags/versions for ``today``'s year.
+
+    ``pre=True`` gives the next alpha: ``26.1a1``, ``26.1a2``, ... A final release after
+    alphas finishes that line (``26.1a2`` -> ``26.1``)."""
     year = today.year % 100
-    numbers = [int(m[2]) for v in existing if (m := VERSION_RE.match(v)) and int(m[1]) == year]
-    return f"{year}.{max(numbers, default=0) + 1}"
+    versions = [k for k in map(_key, existing) if k[0] == year]
+    final = max((n for _, n, a in versions if a == float("inf")), default=0)
+    pending = [(n, int(a)) for _, n, a in versions if a != float("inf") and n > final]
+    if pending:
+        number, alpha = max(pending)
+        return f"{year}.{number}a{alpha + 1}" if pre else f"{year}.{number}"
+    return f"{year}.{final + 1}a1" if pre else f"{year}.{final + 1}"
 
 
 def previous_version(existing: list[str], version: str) -> str | None:
     """The newest release before ``version`` (None for the very first release)."""
-
-    def key(v: str) -> tuple[int, int]:
-        m = VERSION_RE.match(v)
-        return (int(m[1]), int(m[2])) if m else (-1, -1)
-
-    older = [v for v in existing if VERSION_RE.match(v) and key(v) < key(version)]
-    return max(older, key=key) if older else None
+    older = [v for v in existing if VERSION_RE.match(v) and _key(v) < _key(version)]
+    return max(older, key=_key) if older else None
 
 
 def demote_headings(markdown: str, levels: int = 1) -> str:
@@ -183,7 +202,7 @@ def release_contributors(repo: str, previous: str | None, target: str) -> list[s
 
 
 def cmd_next_version(args: argparse.Namespace) -> None:
-    print(next_version(release_tags(), dt.date.today()))
+    print(next_version(release_tags(), dt.date.today(), pre=args.pre))
 
 
 def cmd_notes(args: argparse.Namespace) -> None:
@@ -193,7 +212,9 @@ def cmd_notes(args: argparse.Namespace) -> None:
 def cmd_prepare(args: argparse.Namespace) -> None:
     repo = args.repo or repo_name()
     tags = release_tags()
-    version = args.version or next_version(tags, dt.date.today())
+    version = args.version or next_version(tags, dt.date.today(), pre=args.pre)
+    if not VERSION_RE.match(version):
+        raise SystemExit(f"{version!r} isn't a CalVer version (YY.N or YY.NaM)")
     if version in tags:
         raise SystemExit(f"{version} is already released")
     previous = previous_version(tags, version)
@@ -237,9 +258,12 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--target", default="main", help="Branch to release from")
     p.add_argument("--repo", help="owner/name (default: the current gh repo)")
     p.add_argument("--from-remote", action="store_true", help="Branch off origin/<target> (CI)")
+    p.add_argument("--pre", action="store_true", help="Release the next alpha (e.g. 26.2a1) instead of a final")
     p.add_argument("--dry-run", action="store_true")
     p.set_defaults(func=cmd_prepare)
-    sub.add_parser("next-version").set_defaults(func=cmd_next_version)
+    nv = sub.add_parser("next-version")
+    nv.add_argument("--pre", action="store_true")
+    nv.set_defaults(func=cmd_next_version)
     n = sub.add_parser("notes")
     n.add_argument("version")
     n.set_defaults(func=cmd_notes)

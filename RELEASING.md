@@ -4,7 +4,14 @@
 
 [CalVer](https://calver.org/) `YY.N`: the Nth release of the year. `26.1` is the first
 release of 2026, `26.2` the second, `27.1` the first of 2027. There are no separate
-patch releases: a fix ships as the next number. The version lives only in
+patch releases: a fix ships as the next number.
+
+**Alphas** are PEP 440 pre-releases of the upcoming number: `26.1a1`, `26.1a2`, …, then
+the final `26.1`. pip and uv only install them when asked (`--pre`,
+`--prerelease allow`), or when no final release exists yet, as is the case today.
+GitHub marks them as pre-releases. Cut one with `prepare --pre` (or the *alpha* checkbox
+of the *Prepare release* workflow). A final release after alphas lists everything since
+the last alpha. The version lives only in
 `pyproject.toml`; `potatoq.__version__` reads it from the installed package metadata.
 
 ## Day to day: PR titles and labels are the changelog
@@ -27,6 +34,7 @@ Release notes are generated from merged pull requests. GitHub groups them by lab
    ```console
    $ uv run scripts/release.py prepare --dry-run   # preview the changelog section
    $ uv run scripts/release.py prepare             # open the release PR
+   $ uv run scripts/release.py prepare --pre       # ... for the next alpha instead
    ```
 
    This computes the next version, asks GitHub to generate notes from the PRs merged

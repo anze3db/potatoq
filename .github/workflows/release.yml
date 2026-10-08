@@ -114,5 +114,7 @@ jobs:
             gh release edit "$VERSION" --notes-file notes.md
             gh release upload "$VERSION" dist/* --clobber
           else
-            gh release create "$VERSION" dist/* --title "$VERSION" --notes-file notes.md --verify-tag
+            pre=""
+            case "$VERSION" in *a*) pre="--prerelease" ;; esac  # alphas: 26.1a1
+            gh release create "$VERSION" dist/* --title "$VERSION" --notes-file notes.md --verify-tag $pre
           fi

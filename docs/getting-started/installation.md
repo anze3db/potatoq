@@ -3,8 +3,13 @@
 potatoq needs Python 3.11 or newer. 3.11 – 3.15 are tested, including the free-threaded 3.14t and 3.15t builds.
 
 !!! warning "Alpha"
-    potatoq is alpha software: use it in production at your own risk for now. APIs and
-    defaults may still change between releases.
+    potatoq is alpha software in limited production use: use it in production at your
+    own risk for now. APIs and defaults may still change between releases.
+
+    Releases are currently PEP 440 pre-releases (such as `26.1a1`). `uv add potatoq` and
+    `pip install potatoq` install them while no final release exists. Once one does,
+    ask for alphas explicitly: `uv add --prerelease allow potatoq` or
+    `pip install --pre potatoq`.
 
 !!! warning "Linux and macOS only"
     Windows isn't supported: workers rely on `fork()`, POSIX signals and `setitimer`, the

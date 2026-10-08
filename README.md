@@ -1,9 +1,9 @@
 # 🥔 potatoq
 
 > [!WARNING]
-> **potatoq is alpha software.** It's well tested, but it hasn't run real production
-> workloads yet. Use it in production **at your own risk** for now. APIs and defaults
-> may still change between releases, and bug reports are very welcome.
+> **potatoq is alpha software** in limited production use. Use it in
+> production **at your own risk** for now. APIs and defaults may still change between
+> releases, and bug reports are very welcome.
 
 **A Celery-compatible task queue with production-ready defaults.**
 

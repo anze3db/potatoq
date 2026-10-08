@@ -12,6 +12,10 @@ on:
       version:
         description: "Override the version (default: next CalVer, e.g. 26.2)"
         required: false
+      prerelease:
+        description: "Alpha pre-release (26.2a1, 26.2a2, ...) instead of a final"
+        type: boolean
+        default: false
 
 permissions: {}
 
@@ -31,8 +35,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
+          PRERELEASE: ${{ inputs.prerelease }}
         run: |
           gh auth setup-git  # push with GH_TOKEN; nothing is persisted in the checkout
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          uv run --no-project python scripts/release.py prepare --from-remote ${VERSION:+--version "$VERSION"}
+          pre=""; [ "$PRERELEASE" = "true" ] && pre="--pre"
+          uv run --no-project python scripts/release.py prepare --from-remote $pre ${VERSION:+--version "$VERSION"}
