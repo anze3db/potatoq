@@ -61,6 +61,10 @@ def _rss_kib() -> int:
 _INJECTED = (SoftTimeLimitExceeded, WorkerTerminate)
 
 
+class _Settled(BaseException):
+    """Replaces an injection that arrived too late; ``Slot.run`` raises and drops it."""
+
+
 class Slot:
     """One task slot (a thread, or the main thread when ``threads=1``).
 
@@ -75,6 +79,7 @@ class Slot:
         self.lock = threading.RLock()
         self.thread_id: int | None = None
         self.in_body = False
+        self.injected = False  # inject() fired during this body
         self.task_id: str | None = None
         self.soft_deadline: float | None = None
         self.soft_fired = False
@@ -92,29 +97,39 @@ class Slot:
             # the lock), a function entry, a loop back-edge. It must neither escape into
             # broker code nor leak the lock, so all of this runs in this frame (a helper
             # would check on entry) and is retried, releasing the lock if the injection
-            # interrupted us holding it, until the injection is cleared under the lock.
+            # interrupted us holding it, until no injection is pending under the lock.
             # The store comes first and is plain (no check), so every inject() taking
             # the lock after us refuses: only an injection already under way lands here.
             # The body has returned or raised by then, so its result stands and the
             # late interruption is dropped (an abort still stops the slot: ``stopping``
             # is set before injecting).
+            #
+            # A pending injection is replaced with ``_Settled`` and left to land, rather
+            # than cleared with SetAsyncExc(NULL): on 3.11 clearing raises the
+            # interpreter's "async exception pending" flag that only a delivery lowers,
+            # so it stayed up, and under a tracer (coverage, debuggers) the next traced
+            # call looped on it forever.
             self.in_body = False
             while True:
                 try:
                     while self.lock._is_owned():  # type: ignore[attr-defined]
                         self.lock.release()
                     self.lock.acquire()  # waits out an inject() in progress
-                    if self.thread_id is not None:
-                        _SetAsyncExc(ctypes.c_ulong(self.thread_id), None)  # drop a pending injection
+                    if self.injected:
+                        self.injected = False
+                        _SetAsyncExc(ctypes.c_ulong(threading.get_ident()), ctypes.py_object(_Settled))
+                        while True:  # pragma: no cover - it lands as the call returns; else at this back-edge
+                            pass
                     self.lock.release()
                     break
-                except _INJECTED:
+                except (*_INJECTED, _Settled):
                     pass
 
     def inject(self, exc_type: type[BaseException], task_id: str | None = None) -> bool:
         with self.lock:
             if not self.in_body or self.thread_id is None or (task_id is not None and task_id != self.task_id):
                 return False
+            self.injected = True
             return _SetAsyncExc(ctypes.c_ulong(self.thread_id), ctypes.py_object(exc_type)) == 1
 
 

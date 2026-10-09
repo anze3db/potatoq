@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ctypes
+import subprocess
+import sys
 import threading
 import time
 
@@ -73,6 +75,7 @@ def test_injection_racing_with_the_body_returning_is_dropped():
     with slot.lock:  # what inject() does, having just seen in_body set
         go.set()
         time.sleep(0.2)  # the task returns; its slot thread now waits for the lock
+        slot.injected = True
         assert _SetAsyncExc(ctypes.c_ulong(slot.thread_id), ctypes.py_object(SoftTimeLimitExceeded)) == 1
     t.join(5)
     assert not t.is_alive(), "the slot deadlocked on its next task"
@@ -82,6 +85,38 @@ def test_injection_racing_with_the_body_returning_is_dropped():
     slot.lock.release()
     assert not slot.inject(SoftTimeLimitExceeded)
     app.close()
+
+
+def test_finished_tasks_leave_traced_code_running():
+    # Clearing pending injections with SetAsyncExc(NULL) after every task left 3.11's
+    # "async exception pending" flag up for good; under a tracer (coverage, debuggers)
+    # the next call then spun forever. In a subprocess: a hang takes the whole process.
+    script = """if True:
+        import sys, threading
+        from potatoq.exceptions import SoftTimeLimitExceeded
+        from potatoq.worker.child import Slot
+
+        def traced():
+            return "traced"
+
+        slot = Slot(0)
+        slot.thread_id = threading.get_ident()
+        sys.settrace(lambda *args: None)
+        assert slot.run(lambda: "quiet") == "quiet"
+        assert traced() == "traced"
+
+        def interrupted():
+            assert slot.inject(SoftTimeLimitExceeded)
+            while True:
+                pass
+
+        try:
+            slot.run(interrupted)
+        except SoftTimeLimitExceeded:
+            pass
+        assert traced() == "traced"
+    """
+    subprocess.run([sys.executable, "-c", script], check=True, timeout=30)
 
 
 def test_eager_apply_inside_a_task_keeps_the_outer_task_interruptible():
