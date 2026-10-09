@@ -25,28 +25,30 @@ after themselves, so they're safe to run against services you use for other thin
 
 ## Checks
 
-Everything CI runs, locally:
+Everything CI runs, locally, with [just](https://just.systems) (`just` lists the
+recipes; each is a few `uv run` lines in the [Justfile](Justfile) if you'd rather not
+install it):
 
 ```console
-$ uv run pytest -n auto --dist loadgroup          # tests, in parallel (about a minute;
-                                                  # CPU-timing tests marked `serial` are only reliable alone)
-$ uv run coverage run -m pytest -n auto --dist loadgroup && uv run coverage combine && uv run coverage report   # coverage
-$ uv run mypy                                      # types
-$ uv run ruff check . && uv run ruff format --check src tests benchmarks scripts
-$ uv run --group docs zensical serve               # docs at http://localhost:8000
+$ just test                     # tests, in parallel (about a minute); arguments go to pytest
+$ just test-on 3.14t            # ... on another Python, e.g. free-threaded (in .venv-3.14t)
+$ just lint                     # ruff and mypy
+$ just fmt                      # format and fix
+$ just check                    # lint + tests: before you push
+$ just cov-all                  # coverage on 3.11 and 3.13, combined (must be 100%)
+$ just docs                     # docs at http://localhost:8000
 ```
 
 Coverage must stay at 100%, measured across **all** CI jobs combined: every Python
 version (3.11–3.15, free-threaded included) and Django 6.0. A few lines only run on
-some of them (for example the Django 5.2 fallback on Python 3.11), so a local run on a
-single version can show them as missing. CI's `coverage` job combines everything; its
-summary and an HTML report are on the workflow run page.
+some of them (for example the Django 5.2 fallback on Python 3.11), so `just cov` on a
+single version can show them as missing; `just cov-all` combines 3.11 and 3.13, which
+covers everything today. CI's `coverage` job combines all of them; its summary and an
+HTML report are on the workflow run page.
 
 - **Coverage is 100% and stays there.** Add tests with your change. Use
   `# pragma: no cover - <reason>` only for lines that genuinely can't be exercised.
-- **Free-threaded Python** is supported. To test it:
-  `UV_PROJECT_ENVIRONMENT=.venv-3.14t uv sync --python 3.14t --no-group binary`,
-  then `uv run --no-sync --python 3.14t pytest`.
+- **Free-threaded Python** is supported. To test it: `just test-on 3.14t`.
 - Write tests that run against every broker where it makes sense: see the `broker_app`
   fixture in `tests/conftest.py` and `tests/test_brokers.py`.
 

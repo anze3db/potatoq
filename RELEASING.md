@@ -31,10 +31,13 @@ Release notes list what changed since the last release:
 1. **Prepare**, on an up-to-date `main` with a clean working tree:
 
    ```console
-   $ uv run scripts/release.py prepare --dry-run   # preview the changelog section
-   $ uv run scripts/release.py prepare             # commit "Release 26.N" on main
-   $ uv run scripts/release.py prepare --pre       # ... the next alpha (26.Na1, 26.Na2, …) instead
+   $ just release-preview          # preview the changelog section (--pre: the next alpha's)
+   $ just release                  # commit "Release 26.N" on main
+   $ just release-alpha            # ... the next alpha (26.Na1, 26.Na2, …) instead
    ```
+
+   These run `uv run scripts/release.py prepare` (with `--dry-run` or `--pre`); extra
+   arguments are passed on, e.g. `just release-alpha --push`.
 
    This computes the next version, writes the changelog section (the **Unreleased**
    notes as highlights, the merged PRs or else the commits since the last release, and
@@ -42,7 +45,7 @@ Release notes list what changed since the last release:
    excluded), bumps `pyproject.toml` and `uv.lock`, and commits **"Release 26.N"**.
    Look at the commit, amend `CHANGELOG.md` if you like.
 
-2. **Push it**: `git push` (or `prepare --push` in step 1). That's the release.
+2. **Push it**: `git push` (or `--push` in step 1: `just release --push`). That's the release.
 
 3. **Done, once CI passes.** `.github/workflows/release.yml` runs when the CI workflow
    finishes successfully for a push to `main`, on the commit CI tested. If the version
