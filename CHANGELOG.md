@@ -20,6 +20,11 @@ next release. Everything else is generated from pull request titles by
 - `SIGHUP` reloads the worker in place, like gunicorn: running tasks finish, then the same
   process starts again with the new code (`systemctl reload` with `ExecReload`). Before,
   it killed the worker on the spot.
+- Signal handling: the worker's signal handlers only record the signal and its main
+  loop acts on it, so two SIGTERMs at once (systemd and `uv run` each send one) no
+  longer log "Shutting down" and send `worker_shutting_down` twice. `potatoq beat` stops
+  cleanly on SIGTERM, and a child process whose supervisor died exits without a
+  `BrokenPipeError` traceback.
 
 ## [26.1a1](https://github.com/anze3db/potatoq/releases/tag/26.1a1) - 2026-10-09
 

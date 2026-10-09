@@ -166,7 +166,10 @@ WantedBy=multi-user.target
 ```
 
 In unit files systemd expands `%h` itself (to the home directory), so write `-n
-worker@%%h` to pass potatoq's `%h`, or leave `-n` out. One unit per host is enough: there is no `multi` command to manage, and no separate
+worker@%%h` to pass potatoq's `%h`, or leave `-n` out. If `ExecStart` goes through a wrapper (a shell script, `uv run`), start the worker with
+`exec` (`exec uv run potatoq worker …`) so the wrapper doesn't stay around as an extra
+process that forwards its own copy of every signal. potatoq copes with duplicate signals,
+but the process tree is simpler. One unit per host is enough: there is no `multi` command to manage, and no separate
 `beat` service, because every worker runs the scheduler. Restart workers one at a time
 when deploying to several hosts, so periodic runs aren't missed
 ([details](periodic-tasks.md#missed-runs)). Wrappers like `newrelic-admin run-program`

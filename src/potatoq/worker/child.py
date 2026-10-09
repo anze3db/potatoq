@@ -191,6 +191,13 @@ class Child:
                     written = os.write(self.write_fd, data)
                 except InterruptedError:
                     continue
+                except BrokenPipeError:
+                    # The supervisor is gone (killed, or crashed). Finish what we're
+                    # doing and exit, like the parent-PID check does.
+                    if not self.stopping:
+                        logger.warning("Supervisor died; child exiting")
+                    self.stopping = True
+                    return
                 data = data[written:]
 
     # --- lifecycle -----------------------------------------------------------------

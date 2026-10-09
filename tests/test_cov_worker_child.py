@@ -211,6 +211,17 @@ def test_slot_crash_stops_the_child_with_an_error_code(app, pipe, monkeypatch, c
     assert consumer.closed and not child.slots[0].fetching
 
 
+def test_report_to_a_dead_supervisor_stops_the_child_quietly(app, pipe, caplog):
+    r, w = pipe
+    child = make_child(app, w)
+    os.close(r)  # the supervisor's end is gone
+    with caplog.at_level(logging.WARNING, logger="potatoq.worker"):
+        child._report({"e": "done", "id": "abc"})
+        child._report({"e": "done", "id": "def"})
+    assert child.stopping
+    assert caplog.text.count("Supervisor died; child exiting") == 1
+
+
 def test_failed_settle_restarts_the_process_without_reporting_done(app, pipe, monkeypatch, caplog):
     child = make_child(app, pipe[1])
     slot = child.slots[0]

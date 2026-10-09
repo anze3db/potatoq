@@ -395,12 +395,20 @@ def cmd_beat(app: Potatoq, args: argparse.Namespace) -> int:
         "Every potatoq worker already runs the scheduler; a separate beat is optional",
         extra={"potatoq_tag": "note"},
     )
-    try:
-        while True:
-            scheduler.tick()
-            time.sleep(min(1.0, max(0.05, scheduler.seconds_until_next())))
-    except KeyboardInterrupt:
-        return 0
+    import signal
+
+    stop = {"flag": False}
+
+    def _stop(*_: Any) -> None:
+        stop["flag"] = True  # only note it: the loop below stops within a second
+
+    signal.signal(signal.SIGTERM, _stop)
+    signal.signal(signal.SIGINT, _stop)
+    while not stop["flag"]:
+        scheduler.tick()
+        time.sleep(min(1.0, max(0.05, scheduler.seconds_until_next())))
+    logger.info("Scheduler stopped", extra={"potatoq_icon": "👋"})
+    return 0
 
 
 def _print(data: Any, as_json: bool) -> None:

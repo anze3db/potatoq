@@ -273,6 +273,44 @@ def test_reload_with_nothing_running_and_the_stopped_line(sup, caplog, monkeypat
     assert "Reloading" in caplog.text and f"Worker {sup.hostname} stopped, reloading" in caplog.text
 
 
+def test_signal_handlers_only_record_and_the_loop_acts_once(sup, kills, caplog):
+    """Two SIGTERMs at once (systemd and `uv run` both send one) used to race inside the
+    handler and log "Shutting down" twice. The handler now only records the signal."""
+    from potatoq import signals
+
+    sup.children[FAKE_PID] = child_with(sup)
+    sent = []
+
+    def on_shutting_down(sender, **kwargs):
+        sent.append(kwargs["sig"])
+
+    signals.worker_shutting_down.connect(on_shutting_down)
+    try:
+        with caplog.at_level(logging.INFO, logger="potatoq.worker"):
+            sup._record_signal(signal.SIGTERM, None)
+            sup._record_signal(signal.SIGTERM, None)
+            assert not sup.shutting_down and caplog.text == ""  # nothing happens in the handler
+            sup._handle_signals()
+    finally:
+        signals.worker_shutting_down.disconnect(on_shutting_down)
+    assert caplog.text.count("Shutting down") == 1
+    assert sent == ["SIGTERM"]
+    assert kills == [(FAKE_PID, signal.SIGTERM)]
+
+
+def test_queued_signals_keep_their_meaning(sup, kills):
+    sup.children[FAKE_PID] = child_with(sup)
+    for signum in (signal.SIGINT, signal.SIGINT):  # Ctrl-C twice: warm, then cold
+        sup._record_signal(signum, None)
+    sup._handle_signals()
+    assert sup.shutting_down and sup.cold
+    other = Supervisor(sup.app, concurrency=1)
+    other._record_signal(signal.SIGHUP, None)
+    other._record_signal(signal.SIGQUIT, None)
+    other._handle_signals()
+    assert other.reload_requested and other.cold
+
+
 def test_sigint_twice_is_a_cold_shutdown(sup, kills):
     sup.children[FAKE_PID] = child_with(sup)
     sup._on_int(signal.SIGINT, None)

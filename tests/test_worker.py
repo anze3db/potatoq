@@ -222,3 +222,21 @@ def test_sighup_reloads_the_worker_in_place(wapp, tmp_path):
     out = w.output()
     assert "Reloading" in out and "Starting again with the code on disk" in out
     assert out.count("is ready") == 2
+
+
+def test_two_sigterms_at_once_shut_down_once(wapp, tmp_path):
+    """systemd and `uv run` can both send SIGTERM at the same moment."""
+    import workerapp
+
+    w = Worker(wapp, tmp_path, "-c", "1")
+    try:
+        assert workerapp.add.delay(1, 2).get(timeout=20) == 3
+        os.kill(w.proc.pid, signal.SIGTERM)
+        os.kill(w.proc.pid, signal.SIGTERM)
+        assert w.proc.wait(timeout=30) == 0
+    finally:
+        w.stop()
+    out = w.output()
+    # "Shutting down", or "Warm shutdown: waiting…" if the task's "done" is still in flight
+    assert out.count("Shutting down") + out.count("Warm shutdown") == 1
+    assert out.count("stopped") == 1

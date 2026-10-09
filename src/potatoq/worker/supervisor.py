@@ -26,6 +26,7 @@ import signal
 import socket
 import sys
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -134,6 +135,8 @@ class Supervisor:
         self.registered_digest: str | None = None
         #: Set by SIGHUP: once stopped, the worker starts again (see cli.cmd_worker).
         self.reload_requested = False
+        #: Signals received but not acted on yet (see _record_signal).
+        self._signals: deque[int] = deque()
         self.node_id = f"{self.hostname}:{os.getpid()}:{random.randrange(16**6):06x}"
         self.loglevel = loglevel
         self.logfile = logfile
@@ -256,20 +259,38 @@ class Supervisor:
         os.set_blocking(self._wake_r, False)
         signal.set_wakeup_fd(self._wake_w, warn_on_full_buffer=False)
         self.selector.register(self._wake_r, selectors.EVENT_READ, None)
-        signal.signal(signal.SIGTERM, self._on_term)
-        signal.signal(signal.SIGINT, self._on_int)
-        signal.signal(signal.SIGQUIT, self._on_cold)
-        signal.signal(signal.SIGHUP, self._on_hup)
+        for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGQUIT, signal.SIGHUP):
+            signal.signal(signum, self._record_signal)
         signal.signal(signal.SIGCHLD, lambda *a: None)  # wakes select via the wakeup fd
 
+    def _record_signal(self, signum: int, frame: Any) -> None:
+        """The signal handler: only note the signal. Python runs handlers between any two
+        bytecodes, including inside another handler (systemd and ``uv run`` can each
+        send a SIGTERM at the same moment), so logging or signalling children here
+        would race. The wakeup fd makes the main loop act on it right away."""
+        self._signals.append(signum)
+
+    def _handle_signals(self) -> None:
+        """Act on recorded signals, in the main loop, one at a time."""
+        while self._signals:
+            signum = self._signals.popleft()
+            if signum == signal.SIGINT:
+                self._on_int(signum, None)
+            elif signum == signal.SIGQUIT:
+                self._on_cold(signum, None)
+            elif signum == signal.SIGHUP:
+                self._on_hup(signum, None)
+            else:
+                self._on_term(signum, None)
+
     def _on_term(self, signum: int, frame: Any) -> None:
-        self._begin_shutdown(cold=False)
+        self._begin_shutdown(cold=False, sig="SIGTERM")
 
     def _on_int(self, signum: int, frame: Any) -> None:
-        self._begin_shutdown(cold=self.shutting_down)  # second Ctrl-C = cold
+        self._begin_shutdown(cold=self.shutting_down, sig="SIGINT")  # second Ctrl-C = cold
 
     def _on_cold(self, signum: int, frame: Any) -> None:
-        self._begin_shutdown(cold=True)
+        self._begin_shutdown(cold=True, sig="SIGQUIT")
 
     def _on_hup(self, signum: int, frame: Any) -> None:
         """Reload: a warm shutdown, after which the CLI starts the worker again in this
@@ -277,9 +298,9 @@ class Supervisor:
         if self.shutting_down:
             return  # already stopping; a reload can't override that
         self.reload_requested = True
-        self._begin_shutdown(cold=False)
+        self._begin_shutdown(cold=False, sig="SIGHUP")
 
-    def _begin_shutdown(self, cold: bool) -> None:
+    def _begin_shutdown(self, cold: bool, sig: str = "SIGTERM") -> None:
         if not self.shutting_down:
             running = sum(len(c.running) for c in self.children.values())
             what = "Reloading" if self.reload_requested else "Warm shutdown"
@@ -290,7 +311,6 @@ class Supervisor:
                 )  # fmt: skip
             else:
                 logger.info("Reloading" if self.reload_requested else "Shutting down", extra={"potatoq_icon": "👋"})
-            sig = "SIGHUP" if self.reload_requested else "SIGTERM"
             signals.worker_shutting_down.send(sender=self.hostname, sig=sig, how="Warm", exitcode=0)
             self.shutting_down = True
             self.shutdown_deadline = time.monotonic() + self.shutdown_timeout
@@ -475,6 +495,7 @@ class Supervisor:
             "scheduler": now + 0.5,
         }
         while True:
+            self._handle_signals()
             now = time.monotonic()
             if self.shutting_down:
                 if not self.children:

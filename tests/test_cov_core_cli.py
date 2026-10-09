@@ -314,11 +314,14 @@ def test_run_solo_executes_tasks_until_stopped(app, monkeypatch):
 
 
 def _stop_beat_on_sleep(monkeypatch):
+    """Deliver SIGTERM during the first sleep, as systemd would."""
     sleeps = []
+    handlers: dict = {}
+    monkeypatch.setattr(signal, "signal", lambda sig, handler: handlers.__setitem__(sig, handler))
 
     def sleep(seconds):
         sleeps.append(seconds)
-        raise KeyboardInterrupt
+        handlers[signal.SIGTERM]()
 
     monkeypatch.setattr(cli, "time", types.SimpleNamespace(sleep=sleep))
     return sleeps
