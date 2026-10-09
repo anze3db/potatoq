@@ -1,7 +1,8 @@
 """Release tooling: CalVer versions, changelog generation, release commits.
 
     uv run scripts/release.py prepare            # commit "Release 26.N" on main; then `git push`
-    uv run scripts/release.py prepare --push     # ... and push it
+    uv run scripts/release.py prepare --push     # ... push it, and wait for CI and the release
+    uv run scripts/release.py wait               # wait for the release of a pushed HEAD
     uv run scripts/release.py prepare --pre      # an alpha instead: 26.3a1, 26.3a2, ...
     uv run scripts/release.py prepare --dry-run  # print the changelog section, change nothing
     uv run scripts/release.py prepare --pr       # open a "Release 26.N" PR instead (needs `gh`)
@@ -32,6 +33,8 @@ import json
 import re
 import subprocess
 import sys
+import time
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -226,6 +229,50 @@ def release_contributors(repo: str, previous: str | None, target: str) -> list[s
 # --- commands ---------------------------------------------------------------------
 
 
+def find_run(repo: str, workflow: str, sha: str, timeout: float = 300.0) -> dict:
+    """The newest run of ``workflow`` for commit ``sha``, once GitHub has created it."""
+    deadline = time.monotonic() + timeout
+    while True:
+        runs = gh_json(
+            "run", "list", "--repo", repo, "--workflow", workflow, "--commit", sha,
+            "--limit", "1", "--json", "databaseId,url",
+        )  # fmt: skip
+        if runs:
+            return runs[0]  # type: ignore[index]
+        if time.monotonic() > deadline:
+            raise SystemExit(f"No {workflow} run for {sha[:7]} showed up: https://github.com/{repo}/actions")
+        time.sleep(5)
+
+
+def watch_run(repo: str, run_id: int) -> bool:
+    """Follow a run in the terminal until it finishes; True if it succeeded."""
+    cmd = ["gh", "run", "watch", str(run_id), "--repo", repo, "--compact", "--exit-status", "--interval", "10"]
+    return subprocess.run(cmd, cwd=ROOT).returncode == 0
+
+
+def wait_for_release(repo: str, sha: str, version: str) -> None:
+    """Wait for CI on the pushed release commit, then for the Release workflow."""
+    print(f"Waiting for CI on {sha[:7]}; Ctrl+C stops waiting, the release goes ahead anyway.", flush=True)
+    try:
+        ci = find_run(repo, "ci.yml", sha)
+        if not watch_run(repo, ci["databaseId"]):
+            raise SystemExit(
+                f"\n❌ CI failed, so {version} wasn't published: {ci['url']}\n"
+                f"Fix it and push again: the next green run on main releases {version}."
+            )
+        published = find_run(repo, "release.yml", sha)
+        if not watch_run(repo, published["databaseId"]):
+            raise SystemExit(
+                f"\n❌ Publishing {version} failed: {published['url']}\n"
+                "Once fixed, re-run it: Actions → Release → Run workflow."
+            )
+    except KeyboardInterrupt:
+        raise SystemExit(f"\nStopped waiting. Follow it at https://github.com/{repo}/actions") from None
+    print(f"\n✅ Released {version}")
+    print(f"   https://pypi.org/project/potatoq/{version}/")
+    print(f"   https://github.com/{repo}/releases/tag/{version}")
+
+
 def check_releasable(target: str) -> None:
     """A release commit goes on top of the target branch as everyone else sees it."""
     branch = run("git", "branch", "--show-current").strip()
@@ -244,6 +291,12 @@ def cmd_next_version(args: argparse.Namespace) -> None:
 
 def cmd_notes(args: argparse.Namespace) -> None:
     sys.stdout.write(extract_section(CHANGELOG.read_text(), args.version))
+
+
+def cmd_wait(args: argparse.Namespace) -> None:
+    sha = run("git", "rev-parse", args.commit)
+    version = args.version or tomllib.loads(run("git", "show", f"{sha}:pyproject.toml"))["project"]["version"]
+    wait_for_release(args.repo or repo_name(), sha, version)
 
 
 def cmd_prepare(args: argparse.Namespace) -> None:
@@ -295,6 +348,8 @@ def cmd_prepare(args: argparse.Namespace) -> None:
         if args.push:
             run("git", "push", "origin", f"HEAD:{target}", capture=False)
             print(f"Pushed. {version} is published once CI passes on it (Actions → Release).")
+            if not args.no_wait:
+                wait_for_release(repo, run("git", "rev-parse", "HEAD"), version)
         else:
             print(f"Committed Release {version}. Push it to publish (once CI passes): git push origin {target}")
         return
@@ -320,11 +375,17 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--pre", action="store_true", help="Release the next alpha (e.g. 26.2a1) instead of a final")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--push", action="store_true", help="Push the release commit (it publishes once CI passes)")
+    p.add_argument("--no-wait", action="store_true", help="With --push: don't wait for CI and the release")
     p.add_argument("--pr", action="store_true", help="Open a release PR instead of committing to the branch")
     p.set_defaults(func=cmd_prepare)
     nv = sub.add_parser("next-version")
     nv.add_argument("--pre", action="store_true")
     nv.set_defaults(func=cmd_next_version)
+    w = sub.add_parser("wait", help="Wait for CI and the release of a pushed commit")
+    w.add_argument("commit", nargs="?", default="HEAD")
+    w.add_argument("--version", help="Default: the version in that commit's pyproject.toml")
+    w.add_argument("--repo", help="owner/name (default: the current gh repo)")
+    w.set_defaults(func=cmd_wait)
     n = sub.add_parser("notes")
     n.add_argument("version")
     n.set_defaults(func=cmd_notes)

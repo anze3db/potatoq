@@ -45,7 +45,11 @@ Release notes list what changed since the last release:
    excluded), bumps `pyproject.toml` and `uv.lock`, and commits **"Release 26.N"**.
    Look at the commit, amend `CHANGELOG.md` if you like.
 
-2. **Push it**: `git push` (or `just release --no-dry-run --push` in step 1). That's the release.
+2. **Push it**: `git push`. That's the release. Or push in step 1 with
+   `just release --no-dry-run --push`, which then waits for CI and the Release workflow
+   and ends with ✅ and the PyPI and GitHub release links, or ❌ and the failed run's link
+   (`--no-wait` skips the waiting; Ctrl+C stops it, the release goes ahead). After a
+   plain `git push`, `uv run scripts/release.py wait` does the same waiting.
 
 3. **Done, once CI passes.** `.github/workflows/release.yml` runs when the CI workflow
    finishes successfully for a push to `main`, on the commit CI tested. If the version

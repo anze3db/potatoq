@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import importlib.util
+import re
 from pathlib import Path
 
 import pytest
@@ -187,10 +188,81 @@ def test_prepare_commits_the_release_on_main(repo, capsys):
     assert release.run("git", "rev-list", "--count", "origin/main..HEAD").strip() == "1"  # not pushed
 
 
-def test_prepare_push_publishes_to_origin(repo, capsys):
+def test_prepare_push_publishes_to_origin_and_waits(repo, capsys, monkeypatch):
+    waited = []
+    monkeypatch.setattr(release, "wait_for_release", lambda *args: waited.append(args))
     release.main(["prepare", "--repo", "o/r", "--pre", "--push"])
     assert release.run("git", "log", "-1", "--format=%s", "origin/main") == "Release 26.2a1"
     assert "Pushed." in capsys.readouterr().out
+    assert waited == [("o/r", release.run("git", "rev-parse", "HEAD"), "26.2a1")]
+
+
+def test_prepare_push_no_wait(repo, monkeypatch):
+    monkeypatch.setattr(release, "wait_for_release", lambda *args: pytest.fail("waited"))
+    release.main(["prepare", "--repo", "o/r", "--pre", "--push", "--no-wait"])
+    assert release.run("git", "log", "-1", "--format=%s", "origin/main") == "Release 26.2a1"
+
+
+@pytest.fixture
+def actions(monkeypatch):
+    """Fake GitHub Actions: runs appear after a poll; ``results`` decides how they end."""
+    state = {"polls": 0, "results": {"ci.yml": True, "release.yml": True}, "watched": []}
+
+    def gh_json(*args):
+        workflow = args[args.index("--workflow") + 1]
+        state["polls"] += 1
+        if state["polls"] == 1:
+            return []  # GitHub hasn't created the run yet
+        return [{"databaseId": workflow, "url": f"https://x/{workflow}"}]
+
+    def watch_run(repo, run_id):
+        state["watched"].append(run_id)
+        result = state["results"][run_id]
+        if isinstance(result, BaseException):
+            raise result
+        return result
+
+    monkeypatch.setattr(release, "gh_json", gh_json)
+    monkeypatch.setattr(release, "watch_run", watch_run)
+    monkeypatch.setattr(release.time, "sleep", lambda s: None)
+    return state
+
+
+def test_wait_reports_the_release(actions, capsys):
+    release.wait_for_release("o/r", "abc1234def", "26.2a1")
+    assert actions["watched"] == ["ci.yml", "release.yml"]
+    out = capsys.readouterr().out
+    assert "✅ Released 26.2a1" in out
+    assert "https://pypi.org/project/potatoq/26.2a1/" in out
+    assert "https://github.com/o/r/releases/tag/26.2a1" in out
+
+
+def test_wait_reports_failures(actions):
+    actions["results"]["ci.yml"] = False
+    with pytest.raises(SystemExit, match=re.escape("CI failed, so 26.2a1 wasn't published: https://x/ci.yml")):
+        release.wait_for_release("o/r", "abc1234def", "26.2a1")
+    assert actions["watched"] == ["ci.yml"]  # nothing to wait for after a red CI
+    actions["results"]["ci.yml"] = True
+    actions["results"]["release.yml"] = False
+    with pytest.raises(SystemExit, match=re.escape("Publishing 26.2a1 failed: https://x/release.yml")):
+        release.wait_for_release("o/r", "abc1234def", "26.2a1")
+    actions["results"]["ci.yml"] = KeyboardInterrupt()
+    with pytest.raises(SystemExit, match="Stopped waiting"):
+        release.wait_for_release("o/r", "abc1234def", "26.2a1")
+
+
+def test_wait_gives_up_when_no_run_shows_up(monkeypatch):
+    monkeypatch.setattr(release, "gh_json", lambda *args: [])
+    monkeypatch.setattr(release.time, "sleep", lambda s: None)
+    with pytest.raises(SystemExit, match=re.escape("No ci.yml run for abc1234 showed up")):
+        release.find_run("o/r", "ci.yml", "abc1234def", timeout=0)
+
+
+def test_wait_command_reads_the_version_of_the_commit(repo, monkeypatch):
+    waited = []
+    monkeypatch.setattr(release, "wait_for_release", lambda *args: waited.append(args))
+    release.main(["wait", "--repo", "o/r"])
+    assert waited == [("o/r", release.run("git", "rev-parse", "HEAD"), "26.1")]
 
 
 def test_prepare_refuses_unless_main_is_clean_and_current(repo):
