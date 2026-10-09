@@ -128,3 +128,80 @@ def test_repository_changelog_and_version_agree():
     assert release.VERSION_RE.match(version)
     highlights, _ = release.split_unreleased((root / "CHANGELOG.md").read_text())
     assert highlights or release.extract_section((root / "CHANGELOG.md").read_text(), version)
+
+
+def test_commit_notes_stand_in_for_prs():
+    assert release.has_pr_entries("## What's Changed\n* Retry Redis by @a in https://x/pull/3")
+    assert not release.has_pr_entries("**Full Changelog**: https://x/compare/26.1...26.2")
+    assert release.commit_notes(["Retry Redis connections", "Release 26.1a2", "", "potatoq --version"]) == (
+        "## Changes\n\n* Retry Redis connections\n* potatoq --version"
+    )
+    assert release.commit_notes(["Release 26.2"]) == ""
+
+
+@pytest.fixture
+def repo(tmp_path, monkeypatch):
+    """A checkout of main with an "origin", a 26.1 tag and one commit since."""
+    import subprocess
+
+    def git(*args, cwd):
+        subprocess.run(["git", "-c", "user.name=T", "-c", "user.email=t@e", *args], cwd=cwd, check=True,
+                       capture_output=True)  # fmt: skip
+
+    # Leave the developer's git config (signing, hooks, default branch) out of it.
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig"))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    origin, work = tmp_path / "origin.git", tmp_path / "work"
+    git("init", "--bare", "-b", "main", str(origin), cwd=tmp_path)
+    git("clone", str(origin), str(work), cwd=tmp_path)
+    (work / "CHANGELOG.md").write_text(CHANGELOG)
+    (work / "pyproject.toml").write_text('[project]\nname = "x"\nversion = "26.1"\n')
+    (work / "uv.lock").write_text("version = 1\n")
+    git("add", ".", cwd=work)
+    git("commit", "-m", "Release 26.1", cwd=work)
+    git("tag", "26.1", cwd=work)
+    git("commit", "--allow-empty", "-m", "Retry Redis connections", cwd=work)
+    git("push", "origin", "main", "--tags", cwd=work)
+    monkeypatch.setattr(release, "ROOT", work)
+    monkeypatch.setattr(release, "CHANGELOG", work / "CHANGELOG.md")
+    monkeypatch.setattr(release, "PYPROJECT", work / "pyproject.toml")
+    monkeypatch.setattr(release, "generated_notes", lambda *a: "**Full Changelog**: https://x/compare")
+    monkeypatch.setattr(release, "release_contributors", lambda *a: ["alice"])
+    real_run = release.run
+    monkeypatch.setattr(release, "run", lambda *cmd, **kw: "" if cmd[:2] == ("uv", "lock") else real_run(*cmd, **kw))
+    monkeypatch.setenv("GIT_AUTHOR_NAME", "T")
+    monkeypatch.setenv("GIT_AUTHOR_EMAIL", "t@e")
+    monkeypatch.setenv("GIT_COMMITTER_NAME", "T")
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", "t@e")
+    return work
+
+
+def test_prepare_commits_the_release_on_main(repo, capsys):
+    release.main(["prepare", "--repo", "o/r"])
+    assert release.run("git", "log", "-1", "--format=%s") == "Release 26.2"
+    changelog = (repo / "CHANGELOG.md").read_text()
+    assert "## [26.2](https://github.com/o/r/releases/tag/26.2)" in changelog
+    assert "* Retry Redis connections" in changelog  # no PRs: the commits since 26.1
+    assert 'version = "26.2"' in (repo / "pyproject.toml").read_text()
+    assert "Push it to publish" in capsys.readouterr().out
+    assert release.run("git", "rev-list", "--count", "origin/main..HEAD").strip() == "1"  # not pushed
+
+
+def test_prepare_push_publishes_to_origin(repo, capsys):
+    release.main(["prepare", "--repo", "o/r", "--pre", "--push"])
+    assert release.run("git", "log", "-1", "--format=%s", "origin/main") == "Release 26.2a1"
+    assert "Pushed." in capsys.readouterr().out
+
+
+def test_prepare_refuses_unless_main_is_clean_and_current(repo):
+    (repo / "pyproject.toml").write_text('[project]\nname = "x"\nversion = "26.1"\n# edited\n')
+    with pytest.raises(SystemExit, match="Commit or stash"):
+        release.main(["prepare", "--repo", "o/r"])
+    release.run("git", "checkout", "pyproject.toml")
+    release.run("git", "switch", "-c", "feature")
+    with pytest.raises(SystemExit, match="Switch to main first"):
+        release.main(["prepare", "--repo", "o/r"])
+    release.run("git", "switch", "main")
+    release.run("git", "reset", "--hard", "HEAD~1")  # origin/main is now ahead
+    with pytest.raises(SystemExit, match="behind origin/main"):
+        release.main(["prepare", "--repo", "o/r"])

@@ -1,8 +1,10 @@
-"""Release tooling: CalVer versions, changelog generation, release PRs.
+"""Release tooling: CalVer versions, changelog generation, release commits.
 
-    uv run scripts/release.py prepare            # open a "Release 26.N" PR (needs `gh`)
-    uv run scripts/release.py prepare --dry-run  # print the changelog section, change nothing
+    uv run scripts/release.py prepare            # commit "Release 26.N" on main; then `git push`
+    uv run scripts/release.py prepare --push     # ... and push it
     uv run scripts/release.py prepare --pre      # an alpha instead: 26.3a1, 26.3a2, ...
+    uv run scripts/release.py prepare --dry-run  # print the changelog section, change nothing
+    uv run scripts/release.py prepare --pr       # open a "Release 26.N" PR instead (needs `gh`)
     uv run scripts/release.py next-version       # e.g. 26.3
     uv run scripts/release.py notes 26.2         # the CHANGELOG.md section for a release
 
@@ -10,10 +12,14 @@ Versions are CalVer ``YY.N``: the Nth release of the year (26.1, 26.2, ... 27.1)
 Alphas are PEP 440 pre-releases of the upcoming number: 26.1a1, 26.1a2, then 26.1.
 
 Release notes come from GitHub's generator: merged PR titles grouped by label
-(.github/release.yml), new contributors and a compare link. This script adds the
-full list of everyone who contributed to the release, any hand-written notes from
-the "Unreleased" section of CHANGELOG.md, and writes it all into CHANGELOG.md. The
-same text becomes the GitHub release body (.github/workflows/release.yml).
+(.github/release.yml), new contributors and a compare link. Changes pushed straight to
+main have no PR, so when there are none the commit messages since the last release
+are listed instead. This script adds the full list of everyone who contributed to the
+release, any hand-written notes from the "Unreleased" section of CHANGELOG.md, and
+writes it all into CHANGELOG.md. The same text becomes the GitHub release body.
+
+Pushing the release commit to main publishes it, once CI has passed on that commit
+(.github/workflows/release.yml).
 
 Standard library only, so it runs anywhere `gh` is installed and authenticated.
 """
@@ -33,6 +39,7 @@ CHANGELOG = ROOT / "CHANGELOG.md"
 PYPROJECT = ROOT / "pyproject.toml"
 #: YY.N, optionally a pre-release YY.NaM (PEP 440 alpha: 26.1a1, 26.1a2, then 26.1).
 VERSION_RE = re.compile(r"^(\d{2})\.(\d+)(?:a(\d+))?$")
+RELEASE_COMMIT_RE = re.compile(r"^Release \d{2}\.\d+(a\d+)?$")
 BOTS = re.compile(r"(\[bot\]$|^dependabot|^github-actions|^renovate)", re.I)
 
 
@@ -172,6 +179,24 @@ def repo_name() -> str:
     return run("gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
 
 
+def has_pr_entries(generated: str) -> bool:
+    """Whether GitHub's generated notes list any pull requests (``* Title by @x in #12``)."""
+    return any(line.lstrip().startswith(("* ", "- ")) for line in generated.splitlines())
+
+
+def commit_notes(subjects: list[str]) -> str:
+    """A "Changes" list from commit subjects, without the release commits themselves."""
+    items = [s for s in subjects if s.strip() and not RELEASE_COMMIT_RE.match(s)]
+    if not items:
+        return ""
+    return "## Changes\n\n" + "\n".join(f"* {s}" for s in items)
+
+
+def commit_subjects(previous: str | None, target: str) -> list[str]:
+    span = f"{previous}..{target}" if previous else target
+    return run("git", "log", "--no-merges", "--reverse", "--format=%s", span).splitlines()
+
+
 def release_tags() -> list[str]:
     run("git", "fetch", "--tags", "--quiet")
     return [t for t in run("git", "tag", "--list").split() if VERSION_RE.match(t)]
@@ -201,6 +226,18 @@ def release_contributors(repo: str, previous: str | None, target: str) -> list[s
 # --- commands ---------------------------------------------------------------------
 
 
+def check_releasable(target: str) -> None:
+    """A release commit goes on top of the target branch as everyone else sees it."""
+    branch = run("git", "branch", "--show-current").strip()
+    if branch != target:
+        raise SystemExit(f"Switch to {target} first (you're on {branch or 'a detached HEAD'})")
+    if run("git", "status", "--porcelain", "--untracked-files=no").strip():
+        raise SystemExit("Commit or stash your changes first: the release commit should only bump the version")
+    run("git", "fetch", "--quiet", "origin", target)
+    if run("git", "rev-list", "--count", f"HEAD..origin/{target}").strip() != "0":
+        raise SystemExit(f"Your {target} is behind origin/{target}: pull first")
+
+
 def cmd_next_version(args: argparse.Namespace) -> None:
     print(next_version(release_tags(), dt.date.today(), pre=args.pre))
 
@@ -219,13 +256,20 @@ def cmd_prepare(args: argparse.Namespace) -> None:
         raise SystemExit(f"{version} is already released")
     previous = previous_version(tags, version)
     target = args.target
+    if not args.pr and not args.dry_run:
+        check_releasable(target)
     changelog = CHANGELOG.read_text()
     highlights, changelog = split_unreleased(changelog)
+    generated = generated_notes(repo, version, previous, target)
+    if not has_pr_entries(generated):
+        # Pushed straight to main: list the commits instead of (nonexistent) PRs.
+        changes = commit_notes(commit_subjects(previous, f"origin/{target}" if args.from_remote else "HEAD"))
+        generated = f"{changes}\n\n{generated}".strip() if changes else generated
     section = render_section(
         version,
         dt.date.today(),
         repo,
-        generated_notes(repo, version, previous, target),
+        generated,
         release_contributors(repo, previous, target),
         highlights,
     )
@@ -233,12 +277,27 @@ def cmd_prepare(args: argparse.Namespace) -> None:
         print(f"# Would release {version} (previous: {previous or 'none'})\n")
         print(section)
         return
-    run("git", "switch", "-c", f"release/{version}", f"origin/{target}" if args.from_remote else target, capture=False)
+    if args.pr:
+        run(
+            "git",
+            "switch",
+            "-c",
+            f"release/{version}",
+            f"origin/{target}" if args.from_remote else target,
+            capture=False,
+        )
     CHANGELOG.write_text(insert_section(changelog, section))
     PYPROJECT.write_text(set_version(PYPROJECT.read_text(), version))
     run("uv", "lock", capture=False)
     run("git", "add", "CHANGELOG.md", "pyproject.toml", "uv.lock")
     run("git", "commit", "-m", f"Release {version}", capture=False)
+    if not args.pr:
+        if args.push:
+            run("git", "push", "origin", f"HEAD:{target}", capture=False)
+            print(f"Pushed. {version} is published once CI passes on it (Actions → Release).")
+        else:
+            print(f"Committed Release {version}. Push it to publish (once CI passes): git push origin {target}")
+        return
     run("git", "push", "-u", "origin", f"release/{version}", capture=False)
     body = (
         f"Merging this PR publishes **{version}** to PyPI and creates the GitHub release "
@@ -253,13 +312,15 @@ def cmd_prepare(args: argparse.Namespace) -> None:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
-    p = sub.add_parser("prepare", help="Bump the version, write CHANGELOG.md and open a release PR")
+    p = sub.add_parser("prepare", help="Bump the version, write CHANGELOG.md and commit the release")
     p.add_argument("--version", help="Override the computed CalVer version")
     p.add_argument("--target", default="main", help="Branch to release from")
     p.add_argument("--repo", help="owner/name (default: the current gh repo)")
     p.add_argument("--from-remote", action="store_true", help="Branch off origin/<target> (CI)")
     p.add_argument("--pre", action="store_true", help="Release the next alpha (e.g. 26.2a1) instead of a final")
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--push", action="store_true", help="Push the release commit (it publishes once CI passes)")
+    p.add_argument("--pr", action="store_true", help="Open a release PR instead of committing to the branch")
     p.set_defaults(func=cmd_prepare)
     nv = sub.add_parser("next-version")
     nv.add_argument("--pre", action="store_true")

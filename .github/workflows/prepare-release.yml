@@ -41,4 +41,4 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           pre=""; [ "$PRERELEASE" = "true" ] && pre="--pre"
-          uv run --no-project python scripts/release.py prepare --from-remote $pre ${VERSION:+--version "$VERSION"}
+          uv run --no-project python scripts/release.py prepare --pr --from-remote $pre ${VERSION:+--version "$VERSION"}

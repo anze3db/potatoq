@@ -1,16 +1,19 @@
-# Publishes a release when a version that isn't tagged yet lands on main, which is what
-# merging a "Release YY.N" PR does:
+# Publishes a release when a version that isn't tagged yet lands on main (a "Release
+# YY.N" commit from scripts/release.py), once CI has passed on that very commit:
 #   tag -> build (sdist + wheel) -> PyPI via trusted publishing (with PEP 740
 #   attestations) -> GitHub release with the CHANGELOG.md section and the dists.
-# Every other push to main stops after the version check. Run it by hand
-# (workflow_dispatch) on main to retry a release whose tag already exists.
+# Every other commit stops after the version check. Run it by hand (workflow_dispatch)
+# on main to retry a release whose tag already exists.
 #
-# It runs on the push to main, not on the merged PR: a pull_request run's ref is
-# refs/pull/N/merge, which the pypi environment (main only) rejects.
+# Triggered by CI finishing (workflow_run) rather than by the push, so nothing is
+# published unless every test passed. A workflow_run run's ref is the default branch,
+# which the pypi environment (main only) accepts; it checks out the commit CI tested.
 name: Release
 
 on:
-  push:
+  workflow_run: # zizmor: ignore[dangerous-triggers] only acts on successful CI runs of pushes to this repo's main; never checks out PR code
+    workflows: [CI]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
@@ -22,6 +25,13 @@ concurrency:
 
 jobs:
   tag:
+    # A pull request from a fork can have a branch called "main" too: only pushes count.
+    if: >-
+      github.event_name == 'workflow_dispatch' || (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_repository.full_name == github.repository
+      )
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -33,6 +43,7 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       - id: version
         run: echo "version=$(uv version --short)" >> "$GITHUB_OUTPUT"
@@ -42,6 +53,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
           EVENT: ${{ github.event_name }}
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
           if git rev-parse "$VERSION" >/dev/null 2>&1; then
             if [ "$EVENT" = workflow_dispatch ]; then
@@ -54,7 +66,7 @@ jobs:
             exit 0
           fi
           uv run --no-project python scripts/release.py notes "$VERSION" > /dev/null  # must have a changelog entry
-          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$VERSION" -f "sha=$GITHUB_SHA"
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$VERSION" -f "sha=$SHA"
           echo "release=true" >> "$GITHUB_OUTPUT"
 
   build:

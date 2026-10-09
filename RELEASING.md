@@ -14,45 +14,39 @@ of the *Prepare release* workflow). A final release after alphas lists everythin
 the last alpha. The version lives only in
 `pyproject.toml`; `potatoq.__version__` reads it from the installed package metadata.
 
-## Day to day: PR titles and labels are the changelog
+## Day to day: commits (or PRs) are the changelog
 
-Release notes are generated from merged pull requests. GitHub groups them by label
-(`.github/release.yml`) and credits the authors. So:
+Release notes list what changed since the last release:
 
-- **Write the PR title for users**: "Retry Redis connections on failover", not "fix stuff".
-- **Label each PR** with one of `breaking`, `feature`, `bug`, `performance`,
-  `documentation` or `maintenance`. Unlabelled PRs land under "Other changes".
-  `skip-changelog` hides a PR from the notes.
-- For changes that deserve more than a title, add a line under **Unreleased** in
-  `CHANGELOG.md` in the same PR. It becomes the release's "Highlights".
+- **Pushed straight to `main`:** the commit subjects, so **write them for users**:
+  "Retry Redis connections on failover", not "fix stuff".
+- **Merged pull requests:** GitHub groups them by label (`.github/release.yml`) and
+  credits the authors. Label each PR with one of `breaking`, `feature`, `bug`,
+  `performance`, `documentation` or `maintenance`; `skip-changelog` hides one.
+- For changes that deserve more than a line, add a bullet under **Unreleased** in
+  `CHANGELOG.md` with the change. It becomes the release's "Highlights".
 
 ## Cutting a release
 
-1. **Prepare.** Run the *Prepare release* workflow (Actions → Prepare release → Run
-   workflow), or locally:
+1. **Prepare**, on an up-to-date `main` with a clean working tree:
 
    ```console
    $ uv run scripts/release.py prepare --dry-run   # preview the changelog section
-   $ uv run scripts/release.py prepare             # open the release PR
-   $ uv run scripts/release.py prepare --pre       # ... for the next alpha instead
+   $ uv run scripts/release.py prepare             # commit "Release 26.N" on main
+   $ uv run scripts/release.py prepare --pre       # ... the next alpha (26.Na1, 26.Na2, …) instead
    ```
 
-   This computes the next version, asks GitHub to generate notes from the PRs merged
-   since the last tag, adds the full contributor list (commit authors and
-   `Co-authored-by` trailers, bots excluded), moves the **Unreleased** notes in as
-   highlights, bumps `pyproject.toml` and `uv.lock`, and opens a **"Release 26.N"** PR
-   labelled `release`.
+   This computes the next version, writes the changelog section (the **Unreleased**
+   notes as highlights, the merged PRs or else the commits since the last release, and
+   everyone who contributed: commit authors and `Co-authored-by` trailers, bots
+   excluded), bumps `pyproject.toml` and `uv.lock`, and commits **"Release 26.N"**.
+   Look at the commit, amend `CHANGELOG.md` if you like.
 
-   A PR opened by the workflow doesn't trigger CI, because GitHub doesn't let
-   `GITHUB_TOKEN` trigger workflows. The PR only touches the changelog and version.
-   Run `prepare` locally if you want CI on it.
+2. **Push it**: `git push` (or `prepare --push` in step 1). That's the release.
 
-2. **Review and merge the release PR.** Edit `CHANGELOG.md` in the PR if you like:
-   whatever is merged is what gets published.
-
-3. **Done.** Merging pushes the new version to `main`, and `.github/workflows/release.yml`
-   (which runs on every push to `main` but stops unless the version in `pyproject.toml`
-   isn't tagged yet):
+3. **Done, once CI passes.** `.github/workflows/release.yml` runs when the CI workflow
+   finishes successfully for a push to `main`, on the commit CI tested. If the version
+   in `pyproject.toml` isn't tagged yet, it:
    1. creates the `26.N` tag on that commit;
    2. builds the sdist and wheel with `uv build`, checks them with `twine check`, and
       verifies that the wheel reports the right version;
@@ -60,12 +54,18 @@ Release notes are generated from merged pull requests. GitHub groups them by lab
       also uploads **PEP 740 attestations**, so anyone can verify that the files were
       built by this workflow from this repository;
    4. creates the **GitHub release** `26.N`, with the `CHANGELOG.md` section as its
-      body (PR titles by category, new contributors, everyone who contributed) and the
-      dists attached.
+      body and the dists attached.
 
-   If a step fails (say PyPI is down), re-run the workflow from the Actions tab
-   (*Release* → *Run workflow*). Every step is idempotent: an existing tag and release
-   are reused.
+   If CI fails, nothing is published: fix it and push again (the version is still
+   untagged, so the next green run releases it). If a release step fails (say PyPI is
+   down), re-run the workflow from the Actions tab (*Release* → *Run workflow*). Every
+   step is idempotent: an existing tag and release are reused.
+
+Prefer a pull request? `prepare --pr` (or the *Prepare release* workflow, Actions →
+Prepare release) opens a "Release 26.N" PR instead; merging it releases the same way.
+A PR opened by the workflow doesn't get CI on the PR itself (GitHub doesn't let
+`GITHUB_TOKEN` trigger workflows), but CI runs on the merge to `main` before anything
+is published.
 
 ## One-time setup
 
