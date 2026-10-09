@@ -248,6 +248,31 @@ def test_banner_lists_many_tasks_briefly(sup, caplog):
 # --- signals ---------------------------------------------------------------------------
 
 
+def test_sighup_is_a_warm_shutdown_that_asks_for_a_reload(sup, kills, caplog):
+    sup.children[FAKE_PID] = child_with(sup, Delivery(message(sup.app)))
+    with caplog.at_level(logging.INFO, logger="potatoq.worker"):
+        sup._on_hup(signal.SIGHUP, None)
+    assert sup.reload_requested and sup.shutting_down and not sup.cold
+    assert kills == [(FAKE_PID, signal.SIGTERM)]  # children finish their task, then exit
+    assert "Reloading: waiting up to 25s for 1 running task(s)" in caplog.text
+    sup._on_hup(signal.SIGHUP, None)  # again while reloading: nothing new
+    assert kills == [(FAKE_PID, signal.SIGTERM)]
+
+
+def test_sighup_after_sigterm_doesnt_turn_the_stop_into_a_reload(sup, kills, caplog):
+    sup._on_term(signal.SIGTERM, None)
+    sup._on_hup(signal.SIGHUP, None)
+    assert sup.shutting_down and not sup.reload_requested
+
+
+def test_reload_with_nothing_running_and_the_stopped_line(sup, caplog, monkeypatch):
+    monkeypatch.setattr(sup.app.broker, "unregister", lambda node_id: None)
+    with caplog.at_level(logging.INFO, logger="potatoq.worker"):
+        sup._on_hup(signal.SIGHUP, None)
+        sup._finish()
+    assert "Reloading" in caplog.text and f"Worker {sup.hostname} stopped, reloading" in caplog.text
+
+
 def test_sigint_twice_is_a_cold_shutdown(sup, kills):
     sup.children[FAKE_PID] = child_with(sup)
     sup._on_int(signal.SIGINT, None)

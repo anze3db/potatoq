@@ -228,6 +228,12 @@ def _macos_fork_safety() -> None:
     if sys.platform != "darwin" or os.environ.get("OBJC_DISABLE_INITIALIZE_FORK_SAFETY"):
         return
     os.environ["OBJC_DISABLE_INITIALIZE_FORK_SAFETY"] = "YES"
+    _restart()
+
+
+def _restart() -> None:
+    """Replace this process with a fresh run of the same command line: same PID, same
+    arguments and environment, but the code and settings as they are on disk now."""
     sys.stdout.flush()
     sys.stderr.flush()
     os.execv(sys.executable, [sys.executable, *sys.orig_argv[1:]])
@@ -284,7 +290,11 @@ def cmd_worker(app: Potatoq, args: argparse.Namespace) -> int:
         shutdown_timeout=args.shutdown_timeout,
         threads=args.threads,
     )
-    return worker.start()
+    code = worker.start()
+    if worker.reload_requested:  # SIGHUP: running tasks are done (or requeued); start over
+        logger.info("Starting again with the code on disk", extra={"potatoq_icon": "🔄"})
+        _restart()
+    return code
 
 
 def run_solo(app: Potatoq, args: argparse.Namespace) -> int:
@@ -306,8 +316,13 @@ def run_solo(app: Potatoq, args: argparse.Namespace) -> int:
         stop["flag"] = True
         consumer.interrupt()
 
+    def _reload(*_: Any) -> None:
+        stop["reload"] = not stop["flag"]  # finish the current task, then start over
+        _stop()
+
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
+    signal.signal(signal.SIGHUP, _reload)
     logger.info("potatoq solo worker %s consuming %s", hostname, ",".join(queues))
     scheduler = None
     if not args.no_scheduler:
@@ -360,6 +375,9 @@ def run_solo(app: Potatoq, args: argparse.Namespace) -> int:
         done.set()
         beat.join()
     app.broker.unregister(node_id)
+    if stop.get("reload"):
+        logger.info("Starting again with the code on disk", extra={"potatoq_icon": "🔄"})
+        _restart()
     return 0
 
 

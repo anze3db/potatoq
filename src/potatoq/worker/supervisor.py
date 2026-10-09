@@ -132,6 +132,8 @@ class Supervisor:
         self.queues = list(queues or [conf.task_default_queue])
         self.hostname = hostname or f"potatoq@{socket.gethostname()}"
         self.registered_digest: str | None = None
+        #: Set by SIGHUP: once stopped, the worker starts again (see cli.cmd_worker).
+        self.reload_requested = False
         self.node_id = f"{self.hostname}:{os.getpid()}:{random.randrange(16**6):06x}"
         self.loglevel = loglevel
         self.logfile = logfile
@@ -257,6 +259,7 @@ class Supervisor:
         signal.signal(signal.SIGTERM, self._on_term)
         signal.signal(signal.SIGINT, self._on_int)
         signal.signal(signal.SIGQUIT, self._on_cold)
+        signal.signal(signal.SIGHUP, self._on_hup)
         signal.signal(signal.SIGCHLD, lambda *a: None)  # wakes select via the wakeup fd
 
     def _on_term(self, signum: int, frame: Any) -> None:
@@ -268,17 +271,27 @@ class Supervisor:
     def _on_cold(self, signum: int, frame: Any) -> None:
         self._begin_shutdown(cold=True)
 
+    def _on_hup(self, signum: int, frame: Any) -> None:
+        """Reload: a warm shutdown, after which the CLI starts the worker again in this
+        same process (``os.execv``), so it runs the code and settings on disk now."""
+        if self.shutting_down:
+            return  # already stopping; a reload can't override that
+        self.reload_requested = True
+        self._begin_shutdown(cold=False)
+
     def _begin_shutdown(self, cold: bool) -> None:
         if not self.shutting_down:
             running = sum(len(c.running) for c in self.children.values())
+            what = "Reloading" if self.reload_requested else "Warm shutdown"
             if running:
                 logger.info(
-                    "Warm shutdown: waiting up to %gs for %d running task(s) (Ctrl+C again to stop now)",
-                    self.shutdown_timeout, running, extra={"potatoq_icon": "👋"},
+                    "%s: waiting up to %gs for %d running task(s) (Ctrl+C to stop now)",
+                    what, self.shutdown_timeout, running, extra={"potatoq_icon": "👋"},
                 )  # fmt: skip
             else:
-                logger.info("Shutting down", extra={"potatoq_icon": "👋"})
-            signals.worker_shutting_down.send(sender=self.hostname, sig="SIGTERM", how="Warm", exitcode=0)
+                logger.info("Reloading" if self.reload_requested else "Shutting down", extra={"potatoq_icon": "👋"})
+            sig = "SIGHUP" if self.reload_requested else "SIGTERM"
+            signals.worker_shutting_down.send(sender=self.hostname, sig=sig, how="Warm", exitcode=0)
             self.shutting_down = True
             self.shutdown_deadline = time.monotonic() + self.shutdown_timeout
             for child in self.children.values():
@@ -562,7 +575,8 @@ class Supervisor:
         except Exception:
             logger.exception("Could not unregister worker")
         signals.worker_shutdown.send(sender=self)
-        logger.info("Worker %s stopped", self.hostname, extra={"potatoq_icon": "🥔"})
+        stopped = "stopped, reloading" if self.reload_requested else "stopped"
+        logger.info("Worker %s %s", self.hostname, stopped, extra={"potatoq_icon": "🥔"})
 
 
 def _to_handle(handle: Any) -> Any:

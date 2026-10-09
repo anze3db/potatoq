@@ -153,6 +153,7 @@ class Child:
 
     def _install_signals(self) -> None:
         signal.signal(signal.SIGINT, signal.SIG_IGN)  # Ctrl-C is handled by the supervisor
+        signal.signal(signal.SIGHUP, signal.SIG_IGN)  # so is reloading (and a closed terminal)
         signal.signal(signal.SIGTERM, self._on_term)
         signal.signal(signal.SIGUSR1, self._on_abort)
         signal.signal(signal.SIGALRM, self._on_soft_limit)

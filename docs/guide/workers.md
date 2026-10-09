@@ -120,6 +120,25 @@ free-threaded build are the leaner one.
 |---|---|
 | `SIGTERM` / first `Ctrl-C` | Stop taking tasks, let running ones finish for `--shutdown-timeout` (25 s), then interrupt and requeue them without counting a delivery |
 | second `Ctrl-C`, `SIGQUIT` | Interrupt and requeue running tasks now |
+| `SIGHUP` | Reload: stop like `SIGTERM`, then start again in the same process (same PID) with the code and settings on disk now |
+
+### Reloading with SIGHUP
+
+As with gunicorn, `kill -HUP <pid>` after a deploy makes the worker pick up the new code
+without your process manager restarting it:
+
+1. The worker stops taking tasks. Running ones finish (up to `--shutdown-timeout`; any
+   still running then are requeued without counting a delivery, as on `SIGTERM`).
+2. Once they're done, the worker replaces itself with a fresh run of the same command
+   (`os.execv`): same PID, same arguments and environment. Python starts from scratch,
+   so the new code, settings and task list are loaded, and new child processes are
+   forked from that.
+
+No task is lost or run twice, but new tasks wait until the reload is done (typically a
+second or two plus your longest running task). Unlike gunicorn, potatoq can't overlap old
+and new processes: the worker loads your app once and forks its processes from it, so
+fresh processes alone would still run the old code. Child processes ignore `SIGHUP`, so
+closing the terminal a worker runs in reloads it instead of killing its processes.
 
 25 seconds fits inside Kubernetes' and Heroku's 30-second grace periods. Set your
 `terminationGracePeriodSeconds` a few seconds above `--shutdown-timeout`.
@@ -135,6 +154,8 @@ After=network.target postgresql.service
 WorkingDirectory=/srv/myapp
 Environment=DJANGO_SETTINGS_MODULE=mysite.settings
 ExecStart=/srv/myapp/.venv/bin/python manage.py potatoq worker -c 2
+# systemctl reload: pick up new code in place (see "Reloading with SIGHUP")
+ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 # Send SIGTERM to the supervisor only, and let it stop its processes.
 KillMode=mixed

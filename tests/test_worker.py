@@ -197,3 +197,28 @@ def test_dead_lettered_crash_keeps_argument_types(wapp, tmp_path):
         w.stop()
     [entry] = wapp.broker.dead_letters()
     assert entry["message"]["args"] == [when]
+
+
+def test_sighup_reloads_the_worker_in_place(wapp, tmp_path):
+    """SIGHUP: the running task finishes, then the worker starts again in the same
+    process (same PID) with fresh child processes."""
+    import workerapp
+
+    w = Worker(wapp, tmp_path, "-c", "1")
+    try:
+        child_before = workerapp.pid.delay().get(timeout=20)
+        running = workerapp.sleep.delay(1.5, "during-reload")
+        deadline = time.time() + 10
+        while not events(tmp_path, "sleep-start") and time.time() < deadline:
+            time.sleep(0.05)
+        w.proc.send_signal(signal.SIGHUP)
+        assert running.get(timeout=20) == "during-reload"  # finished, not interrupted
+        assert len(events(tmp_path, "sleep-start")) == 1  # and not run a second time
+        child_after = workerapp.pid.delay().get(timeout=30)
+        assert w.proc.poll() is None  # the same supervisor process is still running
+        assert child_after != child_before  # with new children
+    finally:
+        w.stop()
+    out = w.output()
+    assert "Reloading" in out and "Starting again with the code on disk" in out
+    assert out.count("is ready") == 2

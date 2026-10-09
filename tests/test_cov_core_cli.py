@@ -219,8 +219,11 @@ def fake_supervisor(monkeypatch):
     captured: dict = {}
 
     class FakeSupervisor:
+        reload_requested = False
+
         def __init__(self, app, **kwargs):
             captured.update(kwargs, app=app)
+            self.reload_requested = captured.get("reload", False)
 
         def start(self):
             return 0
@@ -302,7 +305,7 @@ def test_run_solo_executes_tasks_until_stopped(app, monkeypatch):
     assert run(app, "worker", "-P", "solo", "-n", "solo-test") == 0
     assert ticks  # solo workers run the scheduler too
     assert result.get(timeout=1) == 5
-    assert set(handlers) == {signal.SIGTERM, signal.SIGINT}
+    assert set(handlers) == {signal.SIGTERM, signal.SIGINT, signal.SIGHUP}
     assert [(w["hostname"], w["concurrency"]) for w in seen_workers] == [("solo-test", 1)]
     assert app.broker.workers() == []  # unregistered on the way out
 
@@ -673,3 +676,54 @@ def test_version(capsys):
     assert (
         capsys.readouterr().out == f"potatoq {potatoq.__version__} (Python {sys.version.split()[0]}, {sys.platform})\n"
     )
+
+
+def test_sighup_restarts_the_worker_with_the_same_command(app, fake_supervisor, monkeypatch, caplog):
+    restarts = []
+    monkeypatch.setattr(cli, "_restart", lambda: restarts.append(True))
+    assert run(app, "worker", "-c", "1") == 0
+    assert restarts == []  # a plain stop
+    fake_supervisor["reload"] = True  # the supervisor got SIGHUP and stopped
+    with caplog.at_level(logging.INFO, logger="potatoq"):
+        run(app, "worker", "-c", "1")
+    assert restarts == [True]
+    assert "Starting again with the code on disk" in caplog.text
+
+
+def test_restart_reexecutes_the_original_command_line(monkeypatch):
+    calls = []
+    monkeypatch.setattr(os, "execv", lambda path, argv: calls.append((path, argv)))
+    monkeypatch.setattr(sys, "orig_argv", [sys.executable, "-m", "potatoq", "-A", "proj", "worker"])
+    cli._restart()
+    assert calls == [(sys.executable, [sys.executable, "-m", "potatoq", "-A", "proj", "worker"])]
+
+
+def test_solo_worker_reloads_on_sighup(app, monkeypatch):
+    @app.task(name="cli.hup")
+    def hup():
+        return "ok"
+
+    result = hup.delay()
+    handlers: dict = {}
+    monkeypatch.setattr(signal, "signal", lambda sig, handler: handlers.__setitem__(sig, handler))
+    restarts = []
+    monkeypatch.setattr(cli, "_restart", lambda: restarts.append(True))
+    real_consumer = app.broker.consumer
+
+    def consumer(queues, node_id):
+        inner = real_consumer(queues, node_id)
+        real_fetch = inner.fetch
+
+        def fetch(timeout):
+            delivery = real_fetch(timeout=0)
+            if delivery is None:
+                handlers[signal.SIGHUP]()  # reload once the queue is empty
+            return delivery
+
+        inner.fetch = fetch
+        return inner
+
+    monkeypatch.setattr(app.broker, "consumer", consumer)
+    assert run(app, "worker", "-P", "solo", "--no-scheduler") == 0
+    assert result.get(timeout=1) == "ok"
+    assert restarts == [True]

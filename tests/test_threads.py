@@ -224,6 +224,8 @@ def test_celery_style_thread_pool_flag_maps_to_threads(monkeypatch):
     captured = {}
 
     class FakeSupervisor:
+        reload_requested = False
+
         def __init__(self, app, **kwargs):
             captured.update(kwargs)
 
