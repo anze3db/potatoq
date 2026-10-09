@@ -81,6 +81,9 @@ build-backend = "uv_build"
 testpaths = ["tests"]
 timeout = 120
 addopts = "-ra"
+markers = [
+    "serial: measures CPU time, so it must run alone (CI runs these after the parallel run)",
+]
 
 [tool.ruff]
 line-length = 120

@@ -187,3 +187,13 @@ def django_env(django_session):
     task_backends["default"]._app = None
     dj_tasks._default_apps.clear()  # apps other tests configured from Django took it over
     return django_session
+
+
+@pytest.hookimpl(tryfirst=True)  # before pytest-xdist reads the groups
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """With pytest-xdist (`-n 4 --dist loadgroup`), keep tests that need RabbitMQ's
+    scheduler leadership on one worker: there is one leader token per vhost, so two
+    of them running at once would take it from each other."""
+    for item in items:
+        if "rabbitmq" in item.nodeid and any(word in item.name for word in ("periodic", "schedul", "leader")):
+            item.add_marker(pytest.mark.xdist_group("rabbitmq-scheduler-leader"))

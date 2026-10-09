@@ -56,14 +56,19 @@ jobs:
       # psycopg-binary has no free-threaded wheels: use pure psycopg + the runner's libpq.
       - run: uv sync --python ${{ matrix.python }} ${{ endsWith(matrix.python, 't') && '--no-group binary' || '' }}
       # -n 4: most tests wait on real brokers and worker processes, so they run in
-      # parallel well (each uses its own queues, key prefix and schema).
+      # parallel well (each uses its own queues, key prefix and schema). Tests that
+      # share RabbitMQ's scheduler leadership stay on one worker (--dist loadgroup);
+      # tests that measure CPU time ("serial") run alone afterwards.
       - name: Tests
         if: matrix.python != '3.13'
-        run: uv run --no-sync --python ${{ matrix.python }} pytest -q -n 4
+        run: |
+          uv run --no-sync --python ${{ matrix.python }} pytest -q -n 4 --dist loadgroup -m "not serial"
+          uv run --no-sync --python ${{ matrix.python }} pytest -q -m serial
       - name: Tests with coverage (must stay at 100%)
         if: matrix.python == '3.13'
         run: |
-          uv run --no-sync --python 3.13 coverage run -m pytest -q -n 4
+          uv run --no-sync --python 3.13 coverage run -m pytest -q -n 4 --dist loadgroup -m "not serial"
+          uv run --no-sync --python 3.13 coverage run -m pytest -q -m serial
           uv run --no-sync --python 3.13 coverage combine
           uv run --no-sync --python 3.13 coverage report
 

@@ -198,6 +198,7 @@ def _free_threaded() -> bool:
 
 
 @pytest.mark.skipif(not _free_threaded(), reason="needs a free-threaded Python build (3.13t+)")
+@pytest.mark.serial
 def test_free_threaded_threads_run_cpu_bound_tasks_in_parallel(wapp, tmp_path):  # noqa: F811
     import os
 
