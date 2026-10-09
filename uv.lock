@@ -932,7 +932,7 @@ wheels = [
 
 [[package]]
 name = "potatoq"
-version = "26.1a1"
+version = "26.1a2"
 source = { editable = "." }
 default-groups = ["binary", "dev"]
 
