@@ -118,18 +118,24 @@ $ potatoq -A proj worker
 
 ## Fast where it counts
 
-5000 no-op tasks, 4 worker processes, every broker on localhost:
+5000 no-op tasks, 4 worker processes, every broker on localhost. Tasks per second to
+**enqueue** them (`.delay()`) and to **process** them (workers running them):
 
-| Broker | potatoq | Celery 5.6 |
-|---|---:|---:|
-| Redis | **11,900 tasks/s** | 2,700 tasks/s |
-| Postgres | **7,500 tasks/s** | — |
-| RabbitMQ | 6,800 tasks/s ¹ | 8,000 tasks/s ¹ |
-| SQLite | **5,700 tasks/s** | — |
+| Broker | Enqueue: potatoq | Enqueue: Celery 5.6 | Process: potatoq | Process: Celery 5.6 |
+|---|---:|---:|---:|---:|
+| Redis | **10,200** | 5,400 | **11,900** | 2,700 |
+| Postgres | **5,500** | — | **7,500** | — |
+| RabbitMQ | 2,700 ¹ | 8,300 ¹ | 6,800 ² | 8,000 ² |
+| SQLite | **14,700** | — | **5,700** | — |
 
-¹ On RabbitMQ, Celery acks before running the task and publishes without waiting for
-confirms. potatoq acks after the task finishes and waits for every publish to be
-confirmed.
+¹ potatoq waits for RabbitMQ to confirm every publish, so a task is replicated before
+`.delay()` returns; Celery doesn't wait, which is how its publishes can silently
+disappear.
+
+² Celery acks before running the task (a crash loses it) and prefetches; potatoq acks
+after the task finishes and only takes work for idle processes.
+
+[The benchmark and how to run it :octicons-arrow-right-24:](https://github.com/anze3db/potatoq#performance)
 
 ---
 
