@@ -80,6 +80,12 @@ def _import_app(spec: str) -> Potatoq:
     raise SystemExit(f"Could not find a Potatoq app in {spec!r}. Pass -A module:attribute.")
 
 
+def _version() -> str:
+    from . import __version__
+
+    return f"potatoq {__version__} (Python {sys.version.split()[0]}, {sys.platform})"
+
+
 def build_parser(prog: str = "potatoq") -> argparse.ArgumentParser:
     extra: dict[str, Any] = {"color": console.color_enabled(sys.stdout)} if sys.version_info >= (3, 14) else {}
     parser = argparse.ArgumentParser(
@@ -97,6 +103,7 @@ def build_parser(prog: str = "potatoq") -> argparse.ArgumentParser:
     parser.add_argument("-b", "--broker", help="Broker URL (overrides configuration)")
     parser.add_argument("--result-backend", help="Result backend URL")
     parser.add_argument("--workdir", help="Change to this directory first")
+    parser.add_argument("-V", "--version", action="version", version=_version())
     sub = parser.add_subparsers(dest="command")
 
     w = sub.add_parser("worker", help="Start a worker")

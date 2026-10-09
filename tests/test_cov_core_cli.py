@@ -662,3 +662,14 @@ def test_python_dash_m_potatoq():
 
     out = subprocess.run([sys.executable, "-m", "potatoq", "--help"], capture_output=True, text=True, check=True)
     assert out.stdout.startswith("usage: potatoq")
+
+
+def test_version(capsys):
+    import potatoq
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["--version"])
+    assert exc.value.code == 0
+    assert (
+        capsys.readouterr().out == f"potatoq {potatoq.__version__} (Python {sys.version.split()[0]}, {sys.platform})\n"
+    )

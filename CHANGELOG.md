@@ -11,6 +11,8 @@ next release. Everything else is generated from pull request titles by
 
 ## Unreleased
 
+- `potatoq --version` (also `-V`) prints the potatoq and Python versions.
+
 ## [26.1a1](https://github.com/anze3db/potatoq/releases/tag/26.1a1) - 2026-10-09
 
 ### Highlights

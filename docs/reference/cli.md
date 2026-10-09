@@ -7,7 +7,8 @@ $ potatoq [-A APP] [-b BROKER_URL] [--result-backend URL] [--workdir DIR] [--[no
 `-A` accepts `proj`, `proj.module` or `proj.module:attribute`. It finds an `app`,
 `potatoq` or `celery` attribute, or a `potatoq.py`/`celery.py` submodule. With
 `DJANGO_SETTINGS_MODULE` set, `-A` is optional. Every command is also available as
-`python manage.py potatoq …` and `python -m potatoq …`.
+`python manage.py potatoq …` and `python -m potatoq …`. `potatoq --version` prints the
+potatoq and Python versions (include it in bug reports).
 
 Output is made for people on a terminal (colored tags, tables, emojis) and stays plain
 when piped: colors follow [`NO_COLOR`](https://no-color.org) and `FORCE_COLOR`, emojis
