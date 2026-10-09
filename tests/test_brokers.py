@@ -161,6 +161,10 @@ def test_chord_counter_completes_once(broker_app):
 
 def test_periodic_dedup(broker_app):
     app = broker_app
+    if app.kind == "rabbitmq":  # the leader token arrives a moment after connecting
+        deadline = time.monotonic() + 10
+        while not app.broker._leader_poll() and time.monotonic() < deadline:
+            time.sleep(0.05)
     first = app.broker.enqueue_periodic("every-minute", 1700000000.0, msg(app))
     second = app.broker.enqueue_periodic("every-minute", 1700000000.0, msg(app))
     assert first is True
