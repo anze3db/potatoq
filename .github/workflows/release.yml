@@ -1,12 +1,16 @@
-# Publishes a release when a "Release YY.N" PR (label: release) is merged:
+# Publishes a release when a version that isn't tagged yet lands on main, which is what
+# merging a "Release YY.N" PR does:
 #   tag -> build (sdist + wheel) -> PyPI via trusted publishing (with PEP 740
 #   attestations) -> GitHub release with the CHANGELOG.md section and the dists.
-# Can be re-run by hand (workflow_dispatch) for a version that is already in CHANGELOG.md.
+# Every other push to main stops after the version check. Run it by hand
+# (workflow_dispatch) on main to retry a release whose tag already exists.
+#
+# It runs on the push to main, not on the merged PR: a pull_request run's ref is
+# refs/pull/N/merge, which the pypi environment (main only) rejects.
 name: Release
 
 on:
-  pull_request:
-    types: [closed]
+  push:
     branches: [main]
   workflow_dispatch:
 
@@ -18,39 +22,44 @@ concurrency:
 
 jobs:
   tag:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.pull_request.merged && contains(github.event.pull_request.labels.*.name, 'release'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
     outputs:
       version: ${{ steps.version.outputs.version }}
+      release: ${{ steps.tag.outputs.release }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          ref: main
           fetch-depth: 0
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       - id: version
-        run: |
-          version=$(uv version --short)
-          uv run --no-project python scripts/release.py notes "$version" > /dev/null  # must have a changelog entry
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-      - name: Tag
+        run: echo "version=$(uv version --short)" >> "$GITHUB_OUTPUT"
+      - id: tag
+        name: Tag (new versions only)
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
+          EVENT: ${{ github.event_name }}
         run: |
           if git rev-parse "$VERSION" >/dev/null 2>&1; then
-            echo "Tag $VERSION already exists; re-running the release."
-          else
-            gh api "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$VERSION" -f "sha=$(git rev-parse HEAD)"
+            if [ "$EVENT" = workflow_dispatch ]; then
+              echo "Tag $VERSION already exists; re-running the release."
+              echo "release=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "$VERSION is already released; nothing to do."
+              echo "release=false" >> "$GITHUB_OUTPUT"
+            fi
+            exit 0
           fi
+          uv run --no-project python scripts/release.py notes "$VERSION" > /dev/null  # must have a changelog entry
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$VERSION" -f "sha=$GITHUB_SHA"
+          echo "release=true" >> "$GITHUB_OUTPUT"
 
   build:
     needs: tag
+    if: needs.tag.outputs.release == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -50,8 +50,10 @@ Release notes are generated from merged pull requests. GitHub groups them by lab
 2. **Review and merge the release PR.** Edit `CHANGELOG.md` in the PR if you like:
    whatever is merged is what gets published.
 
-3. **Done.** Merging runs `.github/workflows/release.yml`:
-   1. creates the `26.N` tag on the merge commit;
+3. **Done.** Merging pushes the new version to `main`, and `.github/workflows/release.yml`
+   (which runs on every push to `main` but stops unless the version in `pyproject.toml`
+   isn't tagged yet):
+   1. creates the `26.N` tag on that commit;
    2. builds the sdist and wheel with `uv build`, checks them with `twine check`, and
       verifies that the wheel reports the right version;
    3. publishes to PyPI with **trusted publishing** (no API tokens). `pypa/gh-action-pypi-publish`
