@@ -59,6 +59,7 @@ dev = [
     "sqlalchemy>=2.0",
     "coverage[toml]>=7.10",
     "mypy>=2.4.0",
+    "pytest-xdist>=3.8.0",
 ]
 docs = [
     "mkdocstrings-python>=2",

@@ -158,6 +158,8 @@ class Child:
         signal.signal(signal.SIGUSR1, self._on_abort)
         signal.signal(signal.SIGALRM, self._on_soft_limit)
         signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+        # Our handlers are in place: deliver whatever arrived since the fork.
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, FORK_BLOCKED)
 
     def _interrupt_fetches(self) -> None:
         for slot in self.slots:
@@ -352,6 +354,13 @@ class Child:
         executor.log_done(message, outcome)
         self._report({"e": "done", "id": message.id})
         return True
+
+
+#: Signals the supervisor sends to (or shares with) its children. They're blocked across
+#: fork() and unblocked once the child has its own handlers: in between, the child would
+#: still run the supervisor's handlers and a SIGTERM would be lost (the supervisor would
+#: then wait out the whole shutdown timeout for an idle child).
+FORK_BLOCKED = frozenset({signal.SIGTERM, signal.SIGINT, signal.SIGQUIT, signal.SIGHUP, signal.SIGUSR1})
 
 
 def child_main(app: Potatoq, **kwargs: Any) -> None:

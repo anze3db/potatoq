@@ -28,8 +28,8 @@ after themselves, so they're safe to run against services you use for other thin
 Everything CI runs, locally:
 
 ```console
-$ uv run pytest                                   # tests
-$ uv run coverage run -m pytest && uv run coverage combine && uv run coverage report   # must stay at 100%
+$ uv run pytest -n auto                           # tests, in parallel (about a minute)
+$ uv run coverage run -m pytest -n auto && uv run coverage combine && uv run coverage report   # must stay at 100%
 $ uv run mypy                                      # types
 $ uv run ruff check . && uv run ruff format --check src tests benchmarks scripts
 $ uv run --group docs zensical serve               # docs at http://localhost:8000

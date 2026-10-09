@@ -25,6 +25,10 @@ next release. Everything else is generated from pull request titles by
   longer log "Shutting down" and send `worker_shutting_down` twice. `potatoq beat` stops
   cleanly on SIGTERM, and a child process whose supervisor died exits without a
   `BrokenPipeError` traceback.
+- A SIGTERM that reached a just-forked worker process before it had installed its own
+  signal handlers was lost, so stopping the worker shortly after a crash or a process
+  recycle waited out the whole 25 s shutdown timeout. Signals are now blocked across
+  `fork()` until the child is ready.
 
 ## [26.1a1](https://github.com/anze3db/potatoq/releases/tag/26.1a1) - 2026-10-09
 

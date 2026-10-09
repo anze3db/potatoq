@@ -37,7 +37,7 @@ from ..control import publish_registered
 from ..exceptions import TimeLimitExceeded, WorkerLostError
 from ..message import Message
 from . import executor
-from .child import child_main
+from .child import FORK_BLOCKED, child_main
 from .scheduler import Scheduler
 
 if TYPE_CHECKING:
@@ -328,7 +328,13 @@ class Supervisor:
         read_fd, write_fd = os.pipe()
         sys.stdout.flush()
         sys.stderr.flush()
-        pid = os.fork()
+        # See FORK_BLOCKED: the child unblocks these once its own handlers are installed.
+        previous = signal.pthread_sigmask(signal.SIG_BLOCK, FORK_BLOCKED)
+        try:
+            pid = os.fork()
+        except BaseException:
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous)
+            raise
         if pid == 0:  # child
             os.close(read_fd)
             os.close(self._wake_r)
@@ -339,6 +345,7 @@ class Supervisor:
                 hostname=self.hostname, max_tasks=self.max_tasks_per_child, max_memory_kib=self.max_memory_kib,
                 threads=self.threads,
             )  # fmt: skip
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous)  # the supervisor's own signals
         os.close(write_fd)
         os.set_blocking(read_fd, False)
         child = ChildProc(pid=pid, index=index, read_fd=read_fd)

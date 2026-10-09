@@ -55,13 +55,15 @@ jobs:
           python-version: ${{ matrix.python }}
       # psycopg-binary has no free-threaded wheels: use pure psycopg + the runner's libpq.
       - run: uv sync --python ${{ matrix.python }} ${{ endsWith(matrix.python, 't') && '--no-group binary' || '' }}
+      # -n 4: most tests wait on real brokers and worker processes, so they run in
+      # parallel well (each uses its own queues, key prefix and schema).
       - name: Tests
         if: matrix.python != '3.13'
-        run: uv run --no-sync --python ${{ matrix.python }} pytest -q
+        run: uv run --no-sync --python ${{ matrix.python }} pytest -q -n 4
       - name: Tests with coverage (must stay at 100%)
         if: matrix.python == '3.13'
         run: |
-          uv run --no-sync --python 3.13 coverage run -m pytest -q
+          uv run --no-sync --python 3.13 coverage run -m pytest -q -n 4
           uv run --no-sync --python 3.13 coverage combine
           uv run --no-sync --python 3.13 coverage report
 

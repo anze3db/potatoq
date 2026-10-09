@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import logging
 import os
+import signal
 import threading
 import time
 
@@ -314,3 +315,17 @@ def test_logging_level_for_failed_tasks(app, pipe, caplog):
     with caplog.at_level(logging.INFO, logger="potatoq.worker"):
         assert child._process(slot, slot.consumer.fetch(timeout=1)) is True
     assert any(r.levelno == logging.ERROR and "cov.fail" in r.getMessage() for r in caplog.records)
+
+
+def test_child_unblocks_signals_once_its_handlers_are_installed(app, pipe):
+    from potatoq.worker.child import FORK_BLOCKED
+
+    saved = {sig: signal.getsignal(sig) for sig in (*FORK_BLOCKED, signal.SIGALRM, signal.SIGCHLD)}
+    signal.pthread_sigmask(signal.SIG_BLOCK, FORK_BLOCKED)  # as the supervisor forks us
+    try:
+        make_child(app, pipe[1])._install_signals()
+        assert not FORK_BLOCKED & signal.pthread_sigmask(signal.SIG_BLOCK, [])
+    finally:
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, FORK_BLOCKED)
+        for sig, handler in saved.items():
+            signal.signal(sig, handler)

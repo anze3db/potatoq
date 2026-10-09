@@ -17,6 +17,7 @@ from potatoq.brokers.base import Delivery
 from potatoq.config import redact_url
 from potatoq.message import Message
 from potatoq.worker import supervisor as sup_mod
+from potatoq.worker.child import FORK_BLOCKED
 from potatoq.worker.supervisor import ChildProc, Running, Supervisor, default_concurrency, parse_memory
 
 FAKE_PID = 999_999_001  # never signalled: every test that uses it fakes _kill
@@ -355,7 +356,7 @@ def test_spawn_in_the_forked_child_closes_supervisor_fds_and_runs_child_main(sup
         pass
 
     def fake_child_main(app, **kwargs):
-        calls.append({"app": app, **kwargs})
+        calls.append({"app": app, "blocked": signal.pthread_sigmask(signal.SIG_BLOCK, []), **kwargs})
         raise Exited  # the real child_main never returns
 
     monkeypatch.setattr(os, "fork", lambda: 0)
@@ -375,10 +376,42 @@ def test_spawn_in_the_forked_child_closes_supervisor_fds_and_runs_child_main(sup
         assert signal.set_wakeup_fd(-1) == -1
         with pytest.raises(BrokenPipeError):  # the child closed the supervisor's (read) end
             os.write(call["write_fd"], b"x")
+        # Signals stay blocked until the child has its own handlers (Child._install_signals).
+        assert FORK_BLOCKED <= call["blocked"]
     finally:
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, FORK_BLOCKED)  # this test process isn't a child
         os.close(calls[0]["write_fd"])
         sup._wake_r = sup._wake_w = -1  # already closed: keep the fixture from closing reused fds
     assert sup.children == {}
+
+
+def test_spawn_blocks_signals_only_while_forking(sup, monkeypatch):
+    """A SIGTERM must not reach a new child before it has its own handlers, or it's lost
+    and shutdown waits out the whole timeout for an idle process."""
+    during = []
+
+    def fork():
+        during.append(signal.pthread_sigmask(signal.SIG_BLOCK, []))
+        return 424242  # the supervisor's side
+
+    monkeypatch.setattr(os, "fork", fork)
+    before = signal.pthread_sigmask(signal.SIG_BLOCK, [])
+    sup._spawn(0)
+    try:
+        assert FORK_BLOCKED <= during[0]
+        assert signal.pthread_sigmask(signal.SIG_BLOCK, []) == before  # restored in the supervisor
+    finally:
+        child = sup.children.pop(424242)
+        sup.selector.unregister(child.read_fd)
+        os.close(child.read_fd)
+
+    def broken():
+        raise OSError("fork failed")
+
+    monkeypatch.setattr(os, "fork", broken)
+    with pytest.raises(OSError, match="fork failed"):
+        sup._spawn(0)
+    assert signal.pthread_sigmask(signal.SIG_BLOCK, []) == before
 
 
 def test_kill_ignores_already_gone_processes(sup, monkeypatch):
