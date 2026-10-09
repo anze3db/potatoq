@@ -154,7 +154,9 @@ together with [`drain`](../guide/testing.md).
 When the broker is your database, it follows Django's test runner to the test database
 (`test_<name>`), so tests never enqueue into the database a development worker is
 reading. With SQLite's in-memory test database there is no file to share, so tasks stay
-in the test process (`memory://`) until you `drain` them.
+in the test process (`memory://`) until you `drain` them. A test without database access
+(no `django_db` mark) can't enqueue at all: pytest-django stops it, as it would any query
+([details](../guide/testing.md#django-and-pytest-django)).
 
 ## SQLite as database and broker
 

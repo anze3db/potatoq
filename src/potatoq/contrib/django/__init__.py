@@ -268,6 +268,16 @@ def _drop_inherited(**kwargs: Any) -> None:
             conn.connection = None
 
 
+def _in_event_loop() -> bool:
+    import asyncio
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
 def _same_database(broker: Any, alias: str) -> bool:
     if not getattr(broker, "transactional", False):
         return False
@@ -308,19 +318,34 @@ class DjangoTransactionHook:
 
         return connections[using or DEFAULT_DB_ALIAS]
 
-    def publish(self, app: Potatoq, messages: list[Message], using: Any) -> bool:
+    def publish(self, app: Potatoq, messages: list[Message], using: Any, on_commit: bool = True) -> bool:
         from django.db import transaction
 
         conn = self._connection(using)
-        if not conn.in_atomic_block:
-            return False
-        broker = app.broker
-        if _same_database(broker, conn.alias):
-            # The broker is this database: write the task rows in this transaction.
+        in_loop = _in_event_loop()
+        if not conn.in_atomic_block and not in_loop and app._broker_follows is not None:
+            # The broker is a Django database: let Django's checks (pytest-django's
+            # "Database access not allowed") run before potatoq touches any database.
             conn.ensure_connection()
-            app.publish_now(messages, connection=conn.connection)
+        same = _same_database(app.broker, conn.alias)
+        if conn.in_atomic_block:
+            if not on_commit:
+                return False  # sent now, visible before COMMIT: potatoq's own connection
+            if same:
+                # The broker is this database: write the task rows in this transaction.
+                conn.ensure_connection()
+                app.publish_now(messages, connection=conn.connection)
+                return True
+            transaction.on_commit(lambda: app.publish_after_commit(messages), using=conn.alias)
             return True
-        transaction.on_commit(lambda: app.publish_after_commit(messages), using=conn.alias)
+        if not same or in_loop:
+            return False  # Django won't hand its connection to async code
+        # No transaction, but the broker is this database: write through Django's
+        # connection anyway (and commit at once). Then tests write to the test database,
+        # and pytest-django's "Database access not allowed" guard covers tasks too,
+        # instead of a test silently queueing into the development database.
+        with transaction.atomic(using=conn.alias):
+            app.publish_now(messages, connection=conn.connection)
         return True
 
     def on_commit(self, fn: Any, using: Any) -> bool:

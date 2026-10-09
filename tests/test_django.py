@@ -164,6 +164,7 @@ def test_broker_follows_the_test_database(django_env, tmp_path, monkeypatch):
     real = settings_dict["NAME"]
     try:
         settings_dict["NAME"] = str(tmp_path / "test_db.sqlite3")
+        connections["default"].close()  # as the test runner does when it switches
         send_receipt.delay(1)
         assert app.broker.url == f"sqlite:///{tmp_path}/test_db.sqlite3"
         assert [r[0] for r in jobs(app)] == ["djangoproj.shop.tasks.send_receipt"]
@@ -178,6 +179,7 @@ def test_broker_follows_the_test_database(django_env, tmp_path, monkeypatch):
         assert app.backend is app.broker
     finally:
         settings_dict["NAME"] = real
+        connections["default"].close()
     assert app.broker.url == f"sqlite:///{real}"
 
 
@@ -250,3 +252,42 @@ def test_eager_delay_on_commit_waits_for_the_commit_like_celery(django_env):
     finally:
         app.conf.task_always_eager = False
         signals.task_prerun.disconnect(record)
+
+
+def test_delay_without_a_transaction_goes_through_djangos_connection(django_env, monkeypatch):
+    """So tests use the test database, and pytest-django's guard ("Database access not
+    allowed") covers tasks too instead of queueing into the development database."""
+    from django.db.backends.base.base import BaseDatabaseWrapper
+    from djangoproj.shop.tasks import send_receipt
+
+    app = django_env
+    before = len(jobs(app))
+    send_receipt.delay(1)
+    assert len(jobs(app)) == before + 1  # committed right away
+
+    def blocked(self):
+        raise RuntimeError('Database access not allowed, use the "django_db" mark')
+
+    monkeypatch.setattr(BaseDatabaseWrapper, "ensure_connection", blocked)  # what pytest-django does
+    with pytest.raises(RuntimeError, match="Database access not allowed"):
+        send_receipt.delay(2)
+    monkeypatch.undo()
+    assert len(jobs(app)) == before + 1  # nothing slipped through potatoq's own connection
+    app.broker.purge("shop")
+
+
+def test_delay_from_async_code_uses_potatoqs_connection(django_env):
+    """Django refuses its connection in async code, so .delay() there keeps working."""
+    import asyncio
+
+    from djangoproj.shop.tasks import send_receipt
+
+    app = django_env
+    before = len(jobs(app))
+
+    async def view():
+        send_receipt.delay(3)
+
+    asyncio.run(view())
+    assert len(jobs(app)) == before + 1
+    app.broker.purge("shop")

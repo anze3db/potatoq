@@ -512,9 +512,9 @@ class Potatoq:
             return
         if on_commit is None:
             on_commit = self.conf.task_enqueue_on_commit
-        if connection is None and on_commit:
+        if connection is None:
             for hook in self._transaction_hooks:
-                if hook.publish(self, messages, using):
+                if hook.publish(self, messages, using, on_commit=on_commit):
                     return
         self.publish_now(messages, connection)
 

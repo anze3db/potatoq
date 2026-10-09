@@ -25,6 +25,40 @@ countdown or a retry delay run without waiting: time is skipped ahead.
 
 It works with the SQLite broker too, for tests that need real cross-process behaviour.
 
+## Periodic tasks
+
+Check a schedule without waiting for the clock:
+
+```python
+from datetime import datetime
+from potatoq.testing import drain, due, tick
+
+
+def test_nightly_report_runs_at_three():
+    # Which runs fall due in a window (naive datetimes are in the app's timezone)
+    assert [name for name, _ in due(app, datetime(2026, 1, 1), datetime(2026, 1, 2))] == ["nightly-report"]
+
+
+def test_nightly_report_sends_the_email():
+    assert tick(app, at=datetime(2026, 1, 1, 3, 0)) == ["nightly-report"]   # what a worker sends then
+    [task] = drain(app)
+    assert task.state == "SUCCESS"
+```
+
+`due(app, start, end)` lists `(entry name, fire time)` pairs after `start` up to `end`,
+and sends nothing. `tick(app, at=None)` sends what a worker's scheduler would send at
+`at` (runs due in the minute before it), claimed through the broker like in production,
+and returns the entry names; `drain` then runs them.
+
+## Django and pytest-django
+
+When the broker is your Django database, `.delay()` writes through Django's own
+connection, so tasks follow the test database and the usual rules apply: a test without
+`@pytest.mark.django_db` that enqueues a task fails with pytest-django's "Database access
+not allowed", instead of queueing it into your development database where a running
+worker would pick it up. (In async code, where Django refuses its connection, potatoq
+uses its own.)
+
 ## Eager mode
 
 ```python

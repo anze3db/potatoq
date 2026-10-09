@@ -12,6 +12,11 @@ next release. Everything else is generated from pull request titles by
 ## Unreleased
 
 - `potatoq --version` (also `-V`) prints the potatoq and Python versions.
+- Tests can no longer queue tasks into the development database: with the Django
+  database as broker, `.delay()` writes through Django's connection, so it follows the
+  test database and a test without `django_db` fails with pytest-django's error.
+- `potatoq.testing.due()` and `tick()` test periodic task schedules.
+- `potatoq/worker` is a regular package (it had no `__init__.py`).
 
 ## [26.1a1](https://github.com/anze3db/potatoq/releases/tag/26.1a1) - 2026-10-09
 

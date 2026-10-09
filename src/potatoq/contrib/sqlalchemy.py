@@ -180,9 +180,9 @@ def _broker_matches(broker: Any, session: Session) -> bool:
 
 
 class SQLAlchemyTransactionHook:
-    def publish(self, app: Potatoq, messages: list[Message], using: Any) -> bool:
+    def publish(self, app: Potatoq, messages: list[Message], using: Any, on_commit: bool = True) -> bool:
         session = _current_session(using)
-        if session is None:
+        if session is None or not on_commit:
             return False
         if _broker_matches(app.broker, session):
             # The session's connection (acquired now if the transaction has none yet),

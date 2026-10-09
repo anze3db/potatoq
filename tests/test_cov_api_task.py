@@ -159,14 +159,15 @@ def test_publishing_on_commit_goes_through_transaction_hooks(memory_app, add):
     deferred = []
 
     class Hook:
-        def publish(self, app, messages, using):
-            deferred.extend(messages)
+        def publish(self, app, messages, using, on_commit=True):
+            deferred.extend((m.args, on_commit) for m in messages)
             return True
 
     memory_app.add_transaction_hook(Hook())
     add.delay_on_commit(1, 1)
     add.apply_async_on_commit((2, 2))
-    assert [m.args for m in deferred] == [[1, 1], [2, 2]]
+    add.apply_async((3, 3), enqueue_on_commit=False)  # hooks see it too (Django: its connection)
+    assert deferred == [([1, 1], True), ([2, 2], True), ([3, 3], False)]
     assert memory_app.broker.queue_sizes() == {}
 
 

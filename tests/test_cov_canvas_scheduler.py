@@ -129,3 +129,34 @@ def test_scheduler_looks_back_on_start_unless_claims_live_in_memory(memory_app, 
     assert 59 < lag < 65
     monkeypatch.setattr(memory_app.broker, "durable_periodic_claims", False)
     assert time.time() - Scheduler(memory_app).last_check.timestamp() < 5
+
+
+def test_testing_due_and_tick(memory_app):
+    from potatoq.testing import drain, due, tick
+
+    sent = []
+
+    @memory_app.task(name="sched.report")
+    def report(kind):
+        sent.append(kind)
+
+    memory_app.conf.timezone = "Europe/Ljubljana"
+    memory_app.conf.beat_schedule = {
+        "nightly": {"task": "sched.report", "schedule": crontab(hour=3, minute=0), "args": ["nightly"]},
+        "half-hourly": {"task": "sched.report", "schedule": 1800.0, "args": ["half"]},
+    }
+    tz = ZoneInfo("Europe/Ljubljana")
+    runs = due(memory_app, datetime(2026, 1, 1, 2, 0), datetime(2026, 1, 1, 3, 0))  # naive: app timezone
+    assert runs == [
+        ("half-hourly", datetime(2026, 1, 1, 2, 30, tzinfo=tz)),
+        ("half-hourly", datetime(2026, 1, 1, 3, 0, tzinfo=tz)),
+        ("nightly", datetime(2026, 1, 1, 3, 0, tzinfo=tz)),
+    ]
+
+    at = datetime(2026, 1, 1, 3, 0, 20, tzinfo=tz)
+    assert sorted(tick(memory_app, at=at)) == ["half-hourly", "nightly"]
+    assert tick(memory_app, at=at) == []  # claimed once, as on a real broker
+    drain(memory_app)
+    assert sorted(sent) == ["half", "nightly"]  # long after "now": not expired
+    assert tick(memory_app, at=datetime(2026, 1, 1, 3, 10)) == []  # nothing due in that minute
+    assert isinstance(tick(memory_app), list)  # default: now
