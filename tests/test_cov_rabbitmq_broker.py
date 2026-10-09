@@ -525,3 +525,15 @@ def test_consumer_reconnects_when_rabbitmq_cancels_it(rmq, caplog):
         assert fetch_settled(consumer).message.id == m.id  # consuming again
     finally:
         consumer.close()
+
+
+def test_sub_second_delays_are_rounded_up_never_early(rmq):
+    broker = rmq.broker
+    eta = time.time() + 0.4
+    broker.enqueue([m := msg(rmq, eta=eta)])
+    consumer = broker.consumer([rmq.conf.task_default_queue], "w")
+    try:
+        assert fetch_settled(consumer, 8).message.id == m.id
+        assert time.time() >= eta
+    finally:
+        consumer.close()

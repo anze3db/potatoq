@@ -14,6 +14,17 @@ django = pytest.importorskip("django")
 # --- database_url / _canonical / _same_database ---------------------------------------
 
 
+def _has_django_tasks() -> bool:
+    try:
+        import django.tasks  # noqa: F401
+    except ImportError:  # pragma: no cover - Django 5.2 (Python 3.11)
+        return False
+    return True
+
+
+needs_django_tasks = pytest.mark.skipif(not _has_django_tasks(), reason="django.tasks needs Django 6 (Python 3.12+)")
+
+
 def test_database_url_for_postgres_settings(django_env, monkeypatch):
     from django.db import connections
 
@@ -103,6 +114,7 @@ class FakeSettings:
     TASKS = {"not-configured": {}}
 
 
+@needs_django_tasks
 def test_configure_app_reads_potatoq_and_celery_settings(django_env, monkeypatch, caplog):
     from potatoq import Potatoq
     from potatoq.contrib import django as dj
@@ -165,6 +177,7 @@ def test_on_commit_follows_atomic_blocks(django_env):
 
 
 @pytest.mark.filterwarnings("ignore:The EMAIL_")
+@needs_django_tasks
 def test_app_config_ready_configures_an_explicit_app(django_env):
     from django.apps import apps
     from django.tasks import task_backends
@@ -208,6 +221,7 @@ def test_management_command_run_from_argv(django_env, capsys):
 # --- django.tasks backend -------------------------------------------------------------
 
 
+@needs_django_tasks
 def test_backend_registers_each_task_once(django_env):
     from django.tasks import task_backends
     from djangoproj.shop.jobs import total
@@ -219,6 +233,7 @@ def test_backend_registers_each_task_once(django_env):
     assert django_env.tasks[total.module_path] is first
 
 
+@needs_django_tasks
 def test_resolver_only_imports_django_tasks_from_installed_apps(django_env):
     from django.tasks import task_backends
 
@@ -230,6 +245,7 @@ def test_resolver_only_imports_django_tasks_from_installed_apps(django_env):
     assert backend._resolve("djangoproj.shop.jobs.total").name == "djangoproj.shop.jobs.total"
 
 
+@needs_django_tasks
 def test_get_result_for_revoked_and_odd_failures(django_env):
     from django.tasks import TaskResultStatus, task_backends
     from django.tasks.exceptions import TaskResultDoesNotExist
@@ -289,6 +305,7 @@ def second_backend(django_env, monkeypatch):
 
 
 @pytest.mark.filterwarnings("ignore:The EMAIL_")
+@needs_django_tasks
 def test_a_backend_with_its_own_app_leaves_the_others_alone(django_env, second_backend):
     from django.tasks import task_backends
     from djangoproj.shop.jobs import total
@@ -306,6 +323,7 @@ def test_a_backend_with_its_own_app_leaves_the_others_alone(django_env, second_b
     django_env.broker.purge("shop")
 
 
+@needs_django_tasks
 def test_install_registers_resolvers_for_backends_naming_the_app(django_env, second_backend, monkeypatch):
     """A worker never touches backend.app: install() alone must let it find "second"'s tasks."""
     import threading
@@ -341,6 +359,7 @@ def test_install_registers_resolvers_for_backends_naming_the_app(django_env, sec
     assert other._autodiscover == autodiscover
 
 
+@needs_django_tasks
 def test_install_skips_unloadable_apps_and_other_backends(django_env, monkeypatch, caplog):
     from django.conf import settings
     from django.tasks import task_backends

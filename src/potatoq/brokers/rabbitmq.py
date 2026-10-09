@@ -244,7 +244,8 @@ class RabbitMQBroker(Broker):
         body = message.encode().encode()
         props = self.properties(message, headers)
         delay = message.eta - time.time() if message.eta else 0
-        if delay >= 1.0:
+        if delay > 0:
+            # Whole seconds, rounded up: a task may run up to a second late, never early.
             self.declare_delay_infrastructure(ch)
             exchange, routing_key = delay_route(math.ceil(delay), message.queue)
         else:
