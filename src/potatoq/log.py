@@ -135,7 +135,7 @@ class PotatoqFormatter(logging.Formatter):
         te.stack = traceback.StackSummary.from_list(frames)
         try:
             lines = te.format(colorize=self.paint.color)  # type: ignore[call-arg]
-        except TypeError:  # pragma: no cover - Python < 3.13 (coverage runs on 3.13)
+        except TypeError:  # Python < 3.13
             lines = te.format()
         return "".join(lines).rstrip("\n")
 

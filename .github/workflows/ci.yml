@@ -59,18 +59,22 @@ jobs:
       # parallel well (each uses its own queues, key prefix and schema). Tests that
       # share RabbitMQ's scheduler leadership stay on one worker (--dist loadgroup);
       # tests that measure CPU time ("serial") run alone afterwards.
+      # Every job measures coverage; the coverage job below combines them all, so code
+      # that only runs on some versions (3.11's Django 5.2, free-threaded paths) counts.
       - name: Tests
-        if: matrix.python != '3.13'
+        env:
+          PY: ${{ matrix.python }}
         run: |
-          uv run --no-sync --python ${{ matrix.python }} pytest -q -n 4 --dist loadgroup -m "not serial"
-          uv run --no-sync --python ${{ matrix.python }} pytest -q -m serial
-      - name: Tests with coverage (must stay at 100%)
-        if: matrix.python == '3.13'
-        run: |
-          uv run --no-sync --python 3.13 coverage run -m pytest -q -n 4 --dist loadgroup -m "not serial"
-          uv run --no-sync --python 3.13 coverage run -m pytest -q -m serial
-          uv run --no-sync --python 3.13 coverage combine
-          uv run --no-sync --python 3.13 coverage report
+          uv run --no-sync --python "$PY" coverage run -m pytest -q -n 4 --dist loadgroup -m "not serial"
+          uv run --no-sync --python "$PY" coverage run -m pytest -q -m serial
+          uv run --no-sync --python "$PY" coverage combine
+          mv .coverage ".coverage.python-$PY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-python-${{ matrix.python }}
+          path: .coverage.python-*
+          include-hidden-files: true
+          if-no-files-found: error
 
   django-6-0:
     runs-on: ubuntu-latest
@@ -79,4 +83,40 @@ jobs:
         with:
           persist-credentials: false
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-      - run: uv run --with 'django>=6.0,<6.1' pytest -q tests/test_django.py tests/test_django_tasks.py tests/test_cov_contrib_django.py
+      - run: |
+          uv run --with 'django>=6.0,<6.1' coverage run -m pytest -q tests/test_django.py tests/test_django_tasks.py tests/test_cov_contrib_django.py
+          uv run --with 'django>=6.0,<6.1' coverage combine
+          mv .coverage .coverage.django-6.0
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-django-6.0
+          path: .coverage.django-6.0
+          include-hidden-files: true
+          if-no-files-found: error
+
+  coverage:
+    # All test jobs together must cover 100% of the code.
+    needs: [test, django-6-0]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: coverage-*
+          merge-multiple: true
+      - name: Combine and check (must stay at 100%)
+        run: |
+          uv run coverage combine
+          # The summary and HTML report are written even when coverage dropped;
+          # the last line is the check.
+          uv run coverage report --format=markdown --fail-under=0 >> "$GITHUB_STEP_SUMMARY"
+          uv run coverage html --skip-covered --fail-under=0
+          uv run coverage report
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: coverage-report
+          path: htmlcov/

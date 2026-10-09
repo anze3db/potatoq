@@ -100,6 +100,8 @@ source_pkgs = ["potatoq"]
 patch = ["subprocess", "_exit", "fork", "execv"]
 parallel = true
 sigterm = true
+# Paths relative to the checkout, so data from different CI jobs combines.
+relative_files = true
 
 [tool.coverage.report]
 fail_under = 100
