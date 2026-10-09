@@ -11,6 +11,10 @@ next release. Everything else is generated from pull request titles by
 
 ## Unreleased
 
+## [26.1a1](https://github.com/anze3db/potatoq/releases/tag/26.1a1) - 2026-10-09
+
+### Highlights
+
 The first release of potatoq: a Celery-compatible task queue with production-ready defaults.
 **This is an alpha release** in limited production use: use it in production at your own
 risk, and expect APIs and defaults to change while potatoq matures.
@@ -34,3 +38,13 @@ risk, and expect APIs and defaults to change while potatoq matures.
   `queues`, `dead` and `inspect`.
 - Python 3.11–3.15, including free-threaded builds, on Linux and macOS (Windows isn't supported).
 - Fully typed (`mypy` clean, ships `py.typed`), 100% test coverage, MIT licensed.
+
+<!-- Release notes generated using configuration in .github/release.yml at main -->
+
+
+
+**Full Changelog**: https://github.com/anze3db/potatoq/commits/26.1a1
+
+### Contributors
+
+Thank you to everyone who contributed to this release: @anze3db
