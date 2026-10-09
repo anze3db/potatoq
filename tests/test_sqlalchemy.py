@@ -72,8 +72,8 @@ def test_same_database_enqueues_inside_transaction(kind, tmp_path):
         else:
             engine = create_engine(POSTGRES_URL.replace("postgresql://", "postgresql+psycopg://"))
             app.broker.setup()
-        install(app, sessionmaker(engine))
         factory = sessionmaker(engine)
+        install(app, factory)
 
         @app.task
         def notify(x):
@@ -369,3 +369,35 @@ def test_external_connection_is_unwatched_when_the_session_ends(mem_app, engine)
         assert not conn.dispatch.before_cursor_execute
         conn.execute(insert(User.__table__).values(id=1))
         assert session.info == {}
+
+
+def test_install_never_skips_a_new_sessionmaker():
+    # install() remembered targets by id(), and a new sessionmaker can get the id of a
+    # collected one: its sessions weren't tracked, so tasks escaped the transaction.
+    import gc
+
+    app = Potatoq("sqla-ids", broker="memory://", set_as_current=False)
+
+    @app.task
+    def notify():
+        return None
+
+    engine = create_engine("sqlite://")
+    with engine.begin() as conn:
+        conn.execute(text("CREATE TABLE t (x int)"))
+    seen, reused = set(), 0
+    for _ in range(20):
+        factory = sessionmaker(engine)
+        reused += id(factory) in seen
+        seen.add(id(factory))
+        install(app, factory)
+        install(app, factory)  # listens once per target
+        sent = size(app)
+        with factory() as session, session.begin():
+            session.execute(text("INSERT INTO t VALUES (1)"))
+            notify.delay()
+            assert size(app) == sent  # deferred to COMMIT
+        assert size(app) == sent + 1
+        del factory, session
+        gc.collect()
+    assert reused  # the case that matters did happen

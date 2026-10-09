@@ -50,7 +50,9 @@ _WROTE = "potatoq_wrote"
 _COMMITTED = "potatoq_committed"
 _WATCHED = "potatoq_watched"
 _sessions: ContextVar[tuple[weakref.ref[Session], ...]] = ContextVar("potatoq_sqla_sessions", default=())
-_installed: set[int] = set()
+# Weak, not ids (nor event.contains(), which is keyed by id too): a new sessionmaker can
+# get the id of a collected one, and would silently not be tracked.
+_installed: weakref.WeakSet[Any] = weakref.WeakSet()
 
 
 def _after_transaction_create(session: Session, transaction: Any) -> None:
@@ -205,11 +207,11 @@ def install(app: Potatoq, target: Any = Session) -> None:
     """Track transactions of ``target`` (a Session class, sessionmaker or scoped_session)."""
     if hasattr(target, "session_factory"):  # scoped_session
         target = target.session_factory
-    if id(target) not in _installed:
+    if target not in _installed:
         event.listen(target, "after_transaction_create", _after_transaction_create)
         event.listen(target, "after_begin", _after_begin)
         event.listen(target, "after_commit", _after_commit)
         event.listen(target, "after_transaction_end", _after_transaction_end)
         event.listen(target, "after_soft_rollback", _after_soft_rollback)
-        _installed.add(id(target))
+        _installed.add(target)
     app.add_transaction_hook(SQLAlchemyTransactionHook())
