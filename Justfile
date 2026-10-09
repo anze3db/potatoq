@@ -101,20 +101,25 @@ bench:
 bench-cpu pythons="3.14,3.14t":
     BENCH_PYTHONS="{{ pythons }}" uv run python benchmarks/cpu.py
 
-# Preview the next release's changelog section; changes nothing (`--pre` for the next alpha)
-[group("release")]
-release-preview *args:
-    uv run scripts/release.py prepare --dry-run "$@"
-
-# Commit "Release YY.N" on main; `git push` publishes it once CI passes (`--push` pushes too)
+# Preview the next release; `just release --no-dry-run` commits it (`--push` pushes too)
 [group("release")]
 release *args:
-    uv run scripts/release.py prepare "$@"
-
-# Commit the next alpha, e.g. "Release 26.1a2" (`--push` pushes too)
-[group("release")]
-release-alpha *args:
-    uv run scripts/release.py prepare --pre "$@"
+    #!/usr/bin/env bash
+    set -euo pipefail
+    commit=false
+    rest=()
+    for arg in "$@"; do
+        if [[ $arg == --no-dry-run ]]; then commit=true; else rest+=("$arg"); fi
+    done
+    # Alphas (26.1a2, 26.1a3, …) until the API settles; drop --pre to release finals.
+    if $commit; then
+        uv run scripts/release.py prepare --pre ${rest[@]+"${rest[@]}"}
+    else
+        uv run scripts/release.py prepare --pre --dry-run ${rest[@]+"${rest[@]}"}
+        echo
+        echo "That was a dry run. To commit the release: just release --no-dry-run"
+        echo "(add --push to push it too; it publishes once CI passes)"
+    fi
 
 # Remove build, docs, coverage and cache output
 clean:
