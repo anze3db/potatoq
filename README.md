@@ -1,7 +1,6 @@
 # 🥔 potatoq
 
-> [!WARNING]
-> **potatoq is alpha software** in limited production use. Use it in
+> ⚠️ **potatoq is alpha software** in limited production use. Use it in
 > production **at your own risk** for now. APIs and defaults may still change between
 > releases. Please [report bugs on GitHub](https://github.com/anze3db/potatoq/issues).
 
@@ -9,9 +8,9 @@
 
 - 🧵 **Free-threaded Python** (3.14t, 3.15t): tested in CI, and potatoq never turns the
   GIL back on, so `--threads` runs CPU-bound tasks in parallel in one process: 3.4×
-  with 4 threads, in half the memory of 4 processes ([numbers](#free-threaded-python)).
+  with 4 threads, in half the memory of 4 processes ([numbers](https://github.com/anze3db/potatoq#free-threaded-python)).
 - 🎸 **Django tasks**: a backend for Django 6's built-in
-  [`django.tasks`](docs/integrations/django-tasks.md), sharing workers with
+  [`django.tasks`](https://anze3db.github.io/potatoq/integrations/django-tasks/), sharing workers with
   `@shared_task`. The classic setup works too: add `"potatoq.contrib.django"` to
   `INSTALLED_APPS` (no `celery.py` needed), and `.delay()` inside `atomic()` is sent on
   commit.
@@ -67,7 +66,7 @@ Every Celery deployment eventually learns these the hard way. In Potatoq they ar
 | `async def` tasks | not supported | **supported** |
 | Gossip/mingle/heartbeat chatter | on | **doesn't exist** |
 
-Why each one, with sources: [docs/design/defaults.md](docs/design/defaults.md).
+Why each one, with sources: [the defaults, explained](https://anze3db.github.io/potatoq/design/defaults/).
 
 ## Install
 
@@ -91,7 +90,7 @@ supported: the worker relies on `fork()` and POSIX signals. Use WSL on Windows.
 | `amqp://…` | Existing RabbitMQ shops | Quorum queues, publisher confirms, 28-level TTL delay cascade, dead-letter queues |
 | `memory://` | Unit tests | In-process, with `potatoq.testing.drain()` |
 
-The design and research behind each backend are in [docs/design/internals.md](docs/design/internals.md).
+The design and research behind each backend are in [How it works](https://anze3db.github.io/potatoq/design/internals/).
 
 Results are stored by default on the database brokers, where writing a result is part of
 the same transaction as the acknowledgement and costs nothing. On Redis and RabbitMQ they
@@ -119,7 +118,7 @@ signals, `AsyncResult` and custom `Task` base classes keep working. Then delete 
 settings you only had because of Celery's defaults (`task_acks_late`,
 `worker_prefetch_multiplier`, `broker_transport_options={"visibility_timeout": …}`,
 `task_reject_on_worker_lost`, `broker_connection_retry_on_startup`, …).
-See [docs/migrating-from-celery.md](docs/migrating-from-celery.md) for the full list,
+See [Migrating from Celery](https://anze3db.github.io/potatoq/migrating-from-celery/) for the full list,
 including the few deliberate differences.
 
 ## Django
@@ -264,10 +263,10 @@ With the GIL, threads only help I/O-bound tasks. On a free-threaded build, 4 thr
 run CPU-bound tasks 3.4× faster than one process, close to 4 processes' 4.0×, in
 about half the memory. A bare `ThreadPoolExecutor` running the same loop scales about
 as well, so the remaining gap is the interpreter's, not potatoq's
-([details](docs/guide/workers.md#free-threaded-python)).
+([details](https://anze3db.github.io/potatoq/guide/workers/#free-threaded-python)).
 
 There is no Rust in the hot path, and that's deliberate. The research
-([docs/design/internals.md#rust](docs/design/internals.md#rust)) found that per-task overhead is
+([why not Rust](https://anze3db.github.io/potatoq/design/internals/#rust)) found that per-task overhead is
 dominated by broker round trips. Potatoq minimizes those: one Lua call or one SQL
 statement per state change, with the result, ack and follow-up tasks committed together.
 A Rust core measured +0–10% on realistic tasks, while costing fork-safety (prefork
@@ -276,7 +275,7 @@ codec can be added later as an optional extra.
 
 ## Documentation
 
-Full docs live in [`docs/`](docs/) and build into a site with [Zensical](https://zensical.org):
+Full docs are at **[anze3db.github.io/potatoq](https://anze3db.github.io/potatoq/)**. They live in [`docs/`](https://github.com/anze3db/potatoq/tree/main/docs) and build with [Zensical](https://zensical.org):
 
 ```console
 $ uv run --group docs zensical serve      # http://localhost:8000
@@ -291,18 +290,17 @@ $ uv run pytest                 # needs local Redis, Postgres and RabbitMQ; skip
 
 ## Roadmap
 
-Known gaps and planned features live in the [wishlist](docs/wishlist.md). Pick one up!
+Known gaps and planned features live in the [wishlist](https://anze3db.github.io/potatoq/wishlist/). Pick one up!
 
 ## Releases
 
-potatoq uses CalVer (`26.1`, `26.2`, …). See [CHANGELOG.md](CHANGELOG.md) for what
-changed and [RELEASING.md](RELEASING.md) for how releases are cut: a release PR,
+potatoq uses CalVer (`26.1`, `26.2`, …). See [CHANGELOG.md](https://github.com/anze3db/potatoq/blob/main/CHANGELOG.md) for what
+changed and [RELEASING.md](https://github.com/anze3db/potatoq/blob/main/RELEASING.md) for how releases are cut: a release PR,
 trusted publishing to PyPI, and a GitHub release with generated notes.
 
 ## License
 
 MIT
 
-> [!NOTE]
-> potatoq was generated with **Claude Opus 5.5** (high effort): the research, design,
+> 🤖 potatoq was generated with **Claude Opus 5.5** (high effort): the research, design,
 > code, tests and docs.
