@@ -4,9 +4,12 @@
 app = Potatoq("proj", broker="redis://localhost:6379/0", backend="redis://localhost:6379/0")
 ```
 
-Requires `potatoq[redis]`. Works with Redis 6.2+ and Valkey 7.2+ (CI tests Redis 6.2 and 8,
-and Valkey 7.2). `rediss://` (TLS),
-`valkey://` and `unix://` URLs are supported.
+!!! info "Requirements"
+    - **Server:** Redis 6.2 or newer, or Valkey 7.2 or newer. CI tests Redis 6.2 and 8, and
+      Valkey 7.2.
+    - **Install:** `uv add "potatoq[redis]"` (redis-py).
+
+`rediss://` (TLS), `valkey://` and `unix://` URLs are supported.
 
 ## Why it's good
 

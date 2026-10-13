@@ -8,7 +8,10 @@ app = Potatoq(
 )
 ```
 
-Requires `potatoq[rabbitmq]` and RabbitMQ 4.0 or newer (4.3 recommended; CI tests both).
+!!! info "Requirements"
+    - **Server:** RabbitMQ 4.0 or newer; 4.3 recommended (per-task consumer timeouts, and
+      tasks given back don't count as deliveries). CI tests 4.0 and 4.3.
+    - **Install:** `uv add "potatoq[rabbitmq]"` (pika).
 
 ## Why it's good
 

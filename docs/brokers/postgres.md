@@ -4,9 +4,12 @@
 app = Potatoq("proj", broker="postgresql://user:pass@db/app")
 ```
 
-Requires `potatoq[postgres]` (psycopg 3) and PostgreSQL 13 or newer (CI tests 13 and 18).
-When the broker is your Django database, Django's own minimum applies too: PostgreSQL 14
-for Django 5.2 and 6.0, 15 for Django 6.1.
+!!! info "Requirements"
+    - **Server:** PostgreSQL 13 or newer. CI tests 13 and 18.
+    - **Install:** `uv add "potatoq[postgres]"` (psycopg 3).
+    - **With Django:** Django's own minimum applies too: PostgreSQL 14 for Django 5.2 and
+      6.0, 15 for Django 6.1.
+
 Tables are created automatically on first use (run `potatoq migrate` to do it
 explicitly), under a lock so concurrent workers don't race.
 

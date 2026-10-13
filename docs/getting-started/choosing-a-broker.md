@@ -23,7 +23,7 @@ send tasks right after `COMMIT` instead.
 broker on localhost ([benchmark](https://github.com/anze3db/potatoq/blob/main/benchmarks/throughput.py)).
 
 ² The SQLite that Python was built with: `python -c "import sqlite3; print(sqlite3.sqlite_version)"`.
-Pythons from uv and python.org bundle a recent one; see [SQLite](../brokers/sqlite.md#requirements).
+Pythons from uv and python.org bundle a recent one; see [SQLite](../brokers/sqlite.md).
 
 CI tests every broker on the oldest versions listed here and on the newest
 (PostgreSQL 18, Redis 8, RabbitMQ 4.3).
