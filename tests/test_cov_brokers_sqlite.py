@@ -35,6 +35,14 @@ def test_path_from_url():
         _path_from_url("sqlite:///:memory:")
 
 
+def test_old_sqlite_is_refused_up_front(tmp_path, app, monkeypatch):
+    # Claims would fail later with a syntax error near RETURNING.
+    monkeypatch.setattr(sqlite_mod.sqlite3, "sqlite_version_info", (3, 34, 1))
+    monkeypatch.setattr(sqlite_mod.sqlite3, "sqlite_version", "3.34.1")
+    with pytest.raises(ImproperlyConfigured, match=r"needs SQLite 3\.35 or newer, and this Python uses 3\.34\.1"):
+        SQLiteBroker(f"sqlite:///{tmp_path}/old.db", app)
+
+
 def test_durable_uses_synchronous_full(tmp_path, app):
     b = SQLiteBroker(f"sqlite:///{tmp_path}/d.db", app, durable=True)
     try:

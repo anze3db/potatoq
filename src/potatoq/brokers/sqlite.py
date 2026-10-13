@@ -104,6 +104,12 @@ PRAGMAS = (
 )
 
 
+#: Claims use ``UPDATE … RETURNING``, new in SQLite 3.35. Python uses the SQLite it was
+#: built with: uv's and python.org's bundle a recent one, but a distribution's Python
+#: links the system library (3.34 on RHEL 9 and its rebuilds).
+MIN_SQLITE = (3, 35)
+
+
 def _path_from_url(url: str) -> str:
     # sqlite:///relative.db, sqlite:////absolute.db, sqlite:///:memory: (not shared!)
     if "://" not in url:
@@ -124,6 +130,11 @@ class SQLiteBroker(Broker):
     connection_errors = (sqlite3.OperationalError, OSError)  # e.g. "database is locked"
 
     def __init__(self, url: str, app: Any, **options: Any):
+        if sqlite3.sqlite_version_info < MIN_SQLITE:
+            raise ImproperlyConfigured(
+                f"The SQLite broker needs SQLite 3.35 or newer, and this Python uses {sqlite3.sqlite_version}. "
+                "Use a Python that bundles a newer SQLite (uv's and python.org's do) or another broker."
+            )
         super().__init__(url, app, **options)
         self.path = str(Path(_path_from_url(url)).expanduser())
         self._local = threading.local()
