@@ -49,13 +49,12 @@ Every Celery deployment eventually learns these the hard way. In Potatoq they ar
 |---|---|---|
 | Acknowledgement | before the task runs (crash = lost task) | **after it finishes** (at-least-once) |
 | Worker process killed (OOM, segfault) | task acked and lost | **requeued**, dead-lettered after 5 crashes (poison-message guard) |
-| Task raises an exception | failed, not retried | the same: retries are opt-in (`autoretry_for`, `self.retry()`, or `task_autoretry_for` for every task) |
+| Task raises an exception | failed and gone; retries are opt-in | failed and **dead-lettered**: list and replay it (`potatoq dead list/retry`); retries are opt-in (`autoretry_for`, `self.retry()`, or `task_autoretry_for` for every task) |
 | Retries, once you opt in | 3, fixed 180 s apart (9 min) | **10, exponential backoff with jitter, up to 10 min apart** (about 50 min) |
 | Prefetch | 4 × concurrency (short tasks wait behind long ones) | **one task per idle process** |
 | ETA / countdown | held in worker RAM; Redis `visibility_timeout` re-runs them; RabbitMQ's 30 min timeout kills them | **stored by the broker** (sorted set, `run_at` column, TTL cascade) |
 | Long tasks on Redis | redelivered every hour (`visibility_timeout`) | **leases renewed** by the worker while the task runs |
 | Time limits | none | **30 min hard, soft 30 s earlier** |
-| Failed tasks | gone | **dead-letter store** you can list and replay (`potatoq dead list/retry`) |
 | Memory leaks | processes live forever | **recycled every 1000 tasks** (`max_memory_per_child="512MB"` available) |
 | Concurrency | host CPU count (over-subscribes containers) | **CPUs actually available** (affinity + cgroup quota) |
 | SIGTERM | waits forever, then Kubernetes SIGKILLs | **25 s grace, then requeue** unfinished tasks |
