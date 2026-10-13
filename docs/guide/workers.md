@@ -243,8 +243,9 @@ set up (Celery hijacks the root logger by default). Records emitted inside a tas
 `task_id` and `task_name`.
 
 So in a Django project with its own `LOGGING`, the worker's lines look like the rest of
-your logs. If your root handler has no formatter, they have no timestamp or level
-either; add one, for example:
+your logs. The banner's labels are part of the messages (`broker: redis://…`,
+`queues: default`), so they survive any formatter. If your root handler has no
+formatter, the lines have no timestamp or level either; add one, for example:
 
 ```python title="settings.py"
 LOGGING = {

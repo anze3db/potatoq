@@ -136,6 +136,16 @@ def test_formatter_for_files_and_log_collectors():
     assert plain.format(_record("x", potatoq_icon="🥔")).endswith("] x")
 
 
+def test_banner_lines_keep_their_labels_under_any_formatter():
+    # The worker logs "broker: redis://x"; a project's own LOGGING (journald, JSON...)
+    # shows that as is, and potatoq's formatter moves the label into the gutter.
+    record = _record("broker: %s", "redis://x", potatoq_tag="broker")
+    assert logging.Formatter("%(message)s").format(record) == "broker: redis://x"
+    assert PotatoqFormatter(io.StringIO()).format(record).endswith("] broker: redis://x")
+    pretty = ANSI.sub("", PotatoqFormatter(Tty()).format(record))
+    assert pretty.endswith("   broker   redis://x")
+
+
 def test_tracebacks_start_at_the_task_and_end_where_it_raised(tmp_path):
     from potatoq.worker import executor
 

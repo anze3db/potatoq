@@ -186,7 +186,16 @@ def test_queues_given_as_comma_separated_string(app):
 
 def banner(caplog) -> dict[str, str]:
     """The banner's lines by gutter tag: {"broker": "redis://…", …}."""
-    return {r.potatoq_tag: r.getMessage() for r in caplog.records if getattr(r, "potatoq_tag", None)}
+    lines = {}
+    for r in caplog.records:
+        tag = getattr(r, "potatoq_tag", None)
+        if tag:
+            text = r.getMessage()
+            if tag != "potatoq":  # labelled in the message itself, for any log formatter
+                assert text.startswith(f"{tag}: "), text
+                text = text[len(tag) + 2 :]
+            lines[tag] = text
+    return lines
 
 
 def test_banner_warns_without_result_backend_on_foreign_settling_brokers(app, sup, caplog):

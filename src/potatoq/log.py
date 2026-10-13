@@ -88,7 +88,9 @@ class PotatoqFormatter(logging.Formatter):
     Messages stay plain text in the log records; only this formatter adds colors,
     emojis and the tag gutter, so other handlers (and ``caplog``) never see them.
     Records can carry ``potatoq_tag`` (a gutter label instead of the level),
-    ``potatoq_icon`` and ``potatoq_event``.
+    ``potatoq_icon`` and ``potatoq_event``. A tagged message starts with its label
+    (``"broker: redis://…"``), so it still reads right under any other formatter; this
+    one moves the label into the gutter.
     """
 
     def __init__(
@@ -142,6 +144,9 @@ class PotatoqFormatter(logging.Formatter):
     def _message(self, record: logging.LogRecord) -> str:
         paint = self.paint
         text = record.getMessage()
+        tag = getattr(record, "potatoq_tag", None)
+        if tag and text.startswith(f"{tag}: "):
+            text = text[len(tag) + 2 :]  # the gutter (or the plain prefix) shows the label
         event = getattr(record, "potatoq_event", None)
         name, task_id = getattr(record, "task_name", "???"), getattr(record, "task_id", "???")
         icon = getattr(record, "potatoq_icon", None)

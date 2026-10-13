@@ -108,12 +108,12 @@ class Scheduler:
         signals.beat_init.send(sender=self)
         for entry, next_run in describe(self.app, self.entries):
             logger.info(
-                "%s → %s, %s, next run %s", entry.name, entry.task, describe_schedule(entry.schedule), next_run,
+                "schedule: %s → %s, %s, next run %s", entry.name, entry.task, describe_schedule(entry.schedule), next_run,
                 extra={"potatoq_tag": "schedule"},
             )  # fmt: skip
             if entry.task not in self.app.tasks:
                 logger.warning(
-                    "%s runs %r, which isn't registered in this worker. If that's a typo, "
+                    "schedule: %s runs %r, which isn't registered in this worker. If that's a typo, "
                     "every run will be dead-lettered.",
                     entry.name, entry.task, extra={"potatoq_tag": "schedule"},
                 )  # fmt: skip

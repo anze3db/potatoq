@@ -392,7 +392,7 @@ def cmd_beat(app: Potatoq, args: argparse.Namespace) -> int:
         logger.warning("beat_schedule is empty; nothing to do")
     scheduler.start()
     logger.info(
-        "Every potatoq worker already runs the scheduler; a separate beat is optional",
+        "note: Every potatoq worker already runs the scheduler; a separate beat is optional",
         extra={"potatoq_tag": "note"},
     )
     import signal

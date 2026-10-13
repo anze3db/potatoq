@@ -226,6 +226,8 @@ class Supervisor:
         shown = ", ".join(tasks[:6]) + (f", … ({len(tasks) - 6} more)" if len(tasks) > 6 else "")
 
         def say(tag: str, text: str, *args: Any, level: int = logging.INFO, icon: str | None = None) -> None:
+            # The label is part of the message, for logging setups without potatoq's formatter.
+            text = text if tag == "potatoq" else f"{tag}: {text}"
             logger.log(level, text, *args, extra={"potatoq_tag": tag, "potatoq_icon": icon})
 
         say("potatoq", "Worker %s is ready (potatoq %s)", self.hostname, __version__, icon="🥔")
