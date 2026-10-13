@@ -137,7 +137,7 @@ transaction: tasks are sent on commit. See [Testing](guide/testing.md).
 
 | Area | Dramatiq | potatoq | What to do |
 |---|---|---|---|
-| Retries | every exception, 20 times, 15 s … 7 days | only `autoretry_for` or `self.retry()`; 3 times, about 10 s, 20 s, 40 s … 10 min | Set `task_autoretry_for = (Exception,)` |
+| Retries | every exception, 20 times, 15 s … 7 days | only `autoretry_for` or `self.retry()`; 10 times, 10 s doubling up to 10 min apart (about 50 min) | Set `task_autoretry_for = (Exception,)` |
 | Units | milliseconds | seconds | Divide `delay`, `time_limit`, `max_age`, backoffs by 1000 |
 | Time limit | 10 min | 30 min, soft limit 30 s earlier | Set `time_limit` where 10 min mattered |
 | Priority | lower number first | higher number first | Invert priorities |

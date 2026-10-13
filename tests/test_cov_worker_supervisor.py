@@ -249,7 +249,7 @@ def test_banner_describes_app_wide_retries(sup):
     conf = sup.app.conf
     conf.task_autoretry_for = (ConnectionError, TimeoutError)
     assert (
-        sup._retry_policy() == "on ConnectionError, TimeoutError, up to 3 times, backoff from 10.0s, capped at 10m00s"
+        sup._retry_policy() == "on ConnectionError, TimeoutError, up to 10 times, backoff from 10.0s, capped at 10m00s"
     )
     conf.task_retry_backoff, conf.task_max_retries = True, None
     assert (

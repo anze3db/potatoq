@@ -41,7 +41,7 @@ Every option can be set per task in the decorator, and most also per call in
 | `priority` | `0` | Higher runs first, on every broker |
 | `time_limit` | 1800 s | Hard limit: the process is killed |
 | `soft_time_limit` | 30 s (or 10%) before `time_limit` | Raises `SoftTimeLimitExceeded` inside the task |
-| `max_retries` | `3` | For `self.retry()` and `autoretry_for` |
+| `max_retries` | `10` | For `self.retry()` and `autoretry_for` |
 | `autoretry_for` | `()` | Exception types that trigger an automatic retry |
 | `dont_autoretry_for` | `()` | Exceptions excluded from `autoretry_for` |
 | `retry_backoff` | `10` | Exponential backoff base in seconds (`False` = fixed delay) |

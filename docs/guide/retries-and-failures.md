@@ -60,7 +60,7 @@ one task (one that charges a card, say). `dont_autoretry_for` still applies. The
 banner shows the policy:
 
 ```console
-   retries   on Exception, up to 3 times, backoff from 10.0s, capped at 10m00s
+   retries   on Exception, up to 10 times, backoff from 10.0s, capped at 10m00s
 ```
 
 Only retry tasks that are safe to run again: a task that sends an email and then raises
@@ -68,8 +68,8 @@ sends the email again on every retry.
 
 ### How many times
 
-`max_retries` counts retries after the first run: with the default of 3, a task runs at
-most four times. Set it per task, or for every task with `task_max_retries`
+`max_retries` counts retries after the first run: with the default of 10, a task runs at
+most 11 times, over about 50 minutes. Set it per task, or for every task with `task_max_retries`
 (`None` retries without a limit):
 
 ```python
@@ -91,7 +91,8 @@ delay = min(retry_backoff_max, retry_backoff × 2 ** retries_so_far)
 
 With the defaults (`task_retry_backoff = 10`, `task_retry_backoff_max = 600`), the
 delays are about 10 s, 20 s, 40 s, 80 s, 160 s, 320 s, then 10 minutes for every retry
-after that. Change them per task or for every task:
+after that: about 50 minutes for the 10 default retries, enough to ride out a
+third-party outage, a database failover or a deploy. Change them per task or for every task:
 
 ```python
 @app.task(autoretry_for=(Exception,), retry_backoff=60, retry_backoff_max=3600)
@@ -125,7 +126,7 @@ every task, to get the exact delays.
 |---|---|---|---|
 | `autoretry_for` | `task_autoretry_for` | `()` | Exceptions that retry automatically |
 | `dont_autoretry_for` | | `()` | Exceptions that never do |
-| `max_retries` | `task_max_retries` | `3` | Retries after the first run; `None` (app setting): no limit |
+| `max_retries` | `task_max_retries` | `10` | Retries after the first run; `None` (app setting): no limit |
 | `retry_backoff` | `task_retry_backoff` | `10` | First delay in seconds, doubled each retry; `False`: fixed delay |
 | `retry_backoff_max` | `task_retry_backoff_max` | `600` | Longest delay |
 | `retry_jitter` | `task_retry_jitter` | `True` | Randomize each delay between half and all of it |

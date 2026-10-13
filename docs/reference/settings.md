@@ -34,7 +34,7 @@ automatically. The [design notes](../design/defaults.md) explain each default.
 | `task_time_limit` | `1800` | Hard limit in seconds; `None` disables it |
 | `task_soft_time_limit` | `None` | `None` = 30 s (or 10%) before the hard limit |
 | `task_autoretry_for` | `()` | Exceptions every task retries on, unless it sets `autoretry_for`: `(Exception,)` retries everything ([retries](../guide/retries-and-failures.md#retrying-every-task)) |
-| `task_max_retries` | `3` | Retries after the first run; `None` = no limit |
+| `task_max_retries` | `10` | Retries after the first run (about 50 min with the default backoff); `None` = no limit |
 | `task_retry_backoff` | `10` | First retry delay in seconds, doubled each retry; `False` = `task_default_retry_delay` |
 | `task_retry_backoff_max` | `600` | Longest retry delay |
 | `task_retry_jitter` | `True` | Each delay is random between half and all of it ([jitter](../guide/retries-and-failures.md#jitter)) |

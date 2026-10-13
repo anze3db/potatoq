@@ -49,8 +49,8 @@ Every Celery deployment eventually learns these the hard way. In Potatoq they ar
 |---|---|---|
 | Acknowledgement | before the task runs (crash = lost task) | **after it finishes** (at-least-once) |
 | Worker process killed (OOM, segfault) | task acked and lost | **requeued**, dead-lettered after 5 crashes (poison-message guard) |
-| Task raises an exception | failed, not retried | the same: retries are opt-in (`autoretry_for`, `self.retry()`) |
-| Retry delay | fixed 180 s | **exponential backoff with jitter** |
+| Task raises an exception | failed, not retried | the same: retries are opt-in (`autoretry_for`, `self.retry()`, or `task_autoretry_for` for every task) |
+| Retries, once you opt in | 3, fixed 180 s apart (9 min) | **10, exponential backoff with jitter, up to 10 min apart** (about 50 min) |
 | Prefetch | 4 × concurrency (short tasks wait behind long ones) | **one task per idle process** |
 | ETA / countdown | held in worker RAM; Redis `visibility_timeout` re-runs them; RabbitMQ's 30 min timeout kills them | **stored by the broker** (sorted set, `run_at` column, TTL cascade) |
 | Long tasks on Redis | redelivered every hour (`visibility_timeout`) | **leases renewed** by the worker while the task runs |

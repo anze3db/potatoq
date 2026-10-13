@@ -48,6 +48,7 @@ the two never collide.
 | `.delay()` inside a DB transaction | sent immediately | sent on commit, dropped on rollback | Nothing; this fixes `DoesNotExist` races. Opt out per task with `enqueue_on_commit=False` or globally with `task_enqueue_on_commit = False`. |
 | Time limit | none | 30 min hard, soft 30 s earlier | Raise it for long tasks: `@app.task(time_limit=4 * 3600)`. |
 | Automatic retries | none unless `autoretry_for` or `self.retry()` | the same | Nothing. |
+| Retries before giving up | 3 | 10 | Set `max_retries=3` on a task (or `task_max_retries = 3`) to keep the old limit. |
 | `self.retry()` without countdown | 180 s | exponential backoff (about 10 s, 20 s, 40 s …) | Set `default_retry_delay` on the task (or `task_retry_backoff = False`) to get the old behaviour. |
 | Failed tasks | discarded | dead-lettered (`potatoq dead list`) | Nothing. Disable with `task_dead_letter_failures = False`. |
 | Results on Redis/RabbitMQ | only if `result_backend` is set | the same | Nothing. On Postgres/SQLite brokers results are on by default. |

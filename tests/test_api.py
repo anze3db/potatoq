@@ -182,8 +182,8 @@ def test_app_wide_autoretry_for(memory_app):
     for task in (down, bug, own, opted_out):
         task.delay()
     drain(memory_app)
-    # The first run plus task_max_retries (3) retries, or just the one run.
-    assert runs == {"down": 4, "bug": 1, "own": 4, "opted_out": 1}
+    # The first run plus task_max_retries (10) retries, or just the one run.
+    assert runs == {"down": 11, "bug": 1, "own": 11, "opted_out": 1}
 
 
 def test_default_retry_delay_uses_backoff(memory_app):

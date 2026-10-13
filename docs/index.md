@@ -113,7 +113,7 @@ $ potatoq -A proj worker
 | Acknowledgement | before running: <span class="pq-bad">a crash loses the task</span> | <span class="pq-good">after it finishes</span> |
 | Worker process killed (OOM, segfault) | <span class="pq-bad">task lost</span> | <span class="pq-good">requeued; dead-lettered after 5 crashes</span> |
 | Task raises an exception | failed, not retried (retries are opt-in) | failed, not retried (retries are opt-in) |
-| Retry delay | fixed 180 s | <span class="pq-good">exponential backoff with jitter</span> |
+| Retries, once you opt in | 3, fixed 180 s apart | <span class="pq-good">10, exponential backoff with jitter, up to 10 min apart</span> |
 | Prefetch | 4 × concurrency | <span class="pq-good">one task per idle process</span> |
 | ETA / countdown | held in worker RAM | <span class="pq-good">stored by the broker</span> |
 | Long tasks on Redis | <span class="pq-bad">re-run every hour</span> | <span class="pq-good">leases renewed while running</span> |
