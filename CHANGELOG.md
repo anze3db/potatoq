@@ -11,6 +11,36 @@ next release. Everything else is generated from pull request titles by
 
 ## Unreleased
 
+## [26.1a3](https://github.com/anze3db/potatoq/releases/tag/26.1a3) - 2026-10-13
+
+### Changes
+
+* release --push waits for CI and the Release workflow, then reports the outcome
+* SQLite broker: refuse SQLite older than 3.35 with a clear error
+* Document the minimum PostgreSQL, Redis/Valkey, RabbitMQ and SQLite versions; test them in CI
+* Tests: restore the shared worker app's configuration after each test
+* drain() skips ahead to countdowns and retries on Postgres and Redis too
+* Keep the banner's labels when a project has its own logging setup
+* Docs: retries are opt-in, said plainly; a Migrating section with a Dramatiq guide
+* Docs: the same Requirements notice on every broker page
+* Docs home: the install command is a code block, not a pill
+* Docs home: crashes are requeued, exceptions are retried only on request
+* Defaults tables: what happens on an exception sits right below what happens on a crash
+* task_autoretry_for: retry every task on these exceptions, in one setting
+* Docs: retrying every task, how many times, backoff and jitter
+* Retry up to 10 times by default, about 50 minutes, instead of 3
+* Defaults tables: a task that raises is dead-lettered, said in the same row
+
+<!-- Release notes generated using configuration in .github/release.yml at main -->
+
+
+
+**Full Changelog**: https://github.com/anze3db/potatoq/compare/26.1a2...26.1a3
+
+### Contributors
+
+Thank you to everyone who contributed to this release: @anze3db
+
 ## [26.1a2](https://github.com/anze3db/potatoq/releases/tag/26.1a2) - 2026-10-09
 
 ### Highlights
