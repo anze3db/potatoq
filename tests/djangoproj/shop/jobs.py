@@ -47,3 +47,8 @@ if django.VERSION >= (6, 1):
     @task(queue_name="shop", time_limit=60, ignore_result=False)  # Django 6.1+ forwards extra options
     def with_options():
         return "ok"
+
+
+@potatoq_task(queue_name="shop", autoretry_for=())
+def never_retried():
+    raise ConnectionError("down")

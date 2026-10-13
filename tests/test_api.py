@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import collections
 import datetime as dt
 import uuid
 from decimal import Decimal
@@ -151,6 +152,38 @@ def test_autoretry_for_with_backoff(memory_app):
     drain(memory_app)
     assert attempts == [0, 1, 2]
     assert result.get() == "fetched"
+
+
+def test_app_wide_autoretry_for(memory_app):
+    """task_autoretry_for retries every task that doesn't set autoretry_for itself."""
+    memory_app.conf.task_autoretry_for = (ConnectionError,)
+    runs = collections.Counter()
+
+    @memory_app.task
+    def down():
+        runs["down"] += 1
+        raise ConnectionError
+
+    @memory_app.task
+    def bug():  # not an exception in task_autoretry_for
+        runs["bug"] += 1
+        raise ValueError
+
+    @memory_app.task(autoretry_for=(ValueError,))
+    def own():  # the task's own autoretry_for wins
+        runs["own"] += 1
+        raise ValueError
+
+    @memory_app.task(autoretry_for=())
+    def opted_out():
+        runs["opted_out"] += 1
+        raise ConnectionError
+
+    for task in (down, bug, own, opted_out):
+        task.delay()
+    drain(memory_app)
+    # The first run plus task_max_retries (3) retries, or just the one run.
+    assert runs == {"down": 4, "bug": 1, "own": 4, "opted_out": 1}
 
 
 def test_default_retry_delay_uses_backoff(memory_app):

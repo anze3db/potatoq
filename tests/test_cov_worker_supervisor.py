@@ -241,7 +241,22 @@ def test_banner_without_tasks(sup, caplog):
     assert lines["workers"] == "1 process"
     assert lines["limits"] == "30m00s per task (soft 1m00s)"
     assert lines["schedule"] == "off"
+    assert lines["retries"] == "only tasks with autoretry_for, or calling self.retry()"
     assert "warning" not in lines
+
+
+def test_banner_describes_app_wide_retries(sup):
+    conf = sup.app.conf
+    conf.task_autoretry_for = (ConnectionError, TimeoutError)
+    assert (
+        sup._retry_policy() == "on ConnectionError, TimeoutError, up to 3 times, backoff from 10.0s, capped at 10m00s"
+    )
+    conf.task_retry_backoff, conf.task_max_retries = True, None
+    assert (
+        sup._retry_policy() == "on ConnectionError, TimeoutError, without limit, backoff from 1.00s, capped at 10m00s"
+    )
+    conf.task_retry_backoff = False
+    assert sup._retry_policy().endswith(", 3m00s apart")
 
 
 def test_banner_lists_many_tasks_briefly(sup, caplog):

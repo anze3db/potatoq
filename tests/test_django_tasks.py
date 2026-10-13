@@ -95,6 +95,14 @@ def test_failure_and_potatoq_retry_options(django_env, tmp_path):
     assert retried.return_value == 3  # autoretry_for from @task(...) worked
 
 
+def test_autoretry_for_empty_opts_a_django_task_out(django_env):
+    from djangoproj.shop.jobs import boom, never_retried
+
+    backend = boom.get_backend()
+    assert backend._register(never_retried).autoretry_for == ()  # kept, not dropped as "unset"
+    assert backend._register(boom).autoretry_for is None  # task_autoretry_for applies
+
+
 def test_signals_and_validation(django_env):
     from django.tasks import signals
     from django.tasks.exceptions import InvalidTask, TaskResultDoesNotExist

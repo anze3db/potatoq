@@ -236,6 +236,7 @@ class Supervisor:
         say("queues", "%s", ", ".join(self.queues))
         say("workers", "%s", workers)
         say("limits", "%s", limits)
+        say("retries", "%s", self._retry_policy())
         n = len(self.scheduler.entries) if self.scheduler else 0
         say("schedule", "%s", f"{n} periodic task{'s' if n != 1 else ''}" if n else "off")
         say("tasks", "%d registered: %s", len(tasks), shown or "none")
@@ -255,6 +256,24 @@ class Supervisor:
                 "RabbitMQ (up to task_max_deliveries times). Set result_backend to record them as failed instead.",
                 level=logging.WARNING,
             )
+
+    def _retry_policy(self) -> str:
+        """The banner's ``retries`` line: what a task without its own options does."""
+        from .executor import duration
+
+        conf = self.app.conf
+        retry_on = tuple(conf.task_autoretry_for or ())
+        if not retry_on:
+            return "only tasks with autoretry_for, or calling self.retry()"
+        names = ", ".join(e.__name__ for e in retry_on)
+        times = "without limit" if conf.task_max_retries is None else f"up to {conf.task_max_retries} times"
+        backoff = conf.task_retry_backoff
+        if backoff:
+            first = 1.0 if backoff is True else float(backoff)
+            delay = f"backoff from {duration(first)}, capped at {duration(float(conf.task_retry_backoff_max))}"
+        else:
+            delay = f"{duration(float(conf.task_default_retry_delay))} apart"
+        return f"on {names}, {times}, {delay}"
 
     def _install_signals(self) -> None:
         os.set_blocking(self._wake_w, False)

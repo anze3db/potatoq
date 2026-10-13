@@ -97,7 +97,7 @@ class PotatoqTask(Task):
     time_limit: float | None = None
     soft_time_limit: float | None = None
     max_retries: int | None = None
-    autoretry_for: tuple[type[BaseException], ...] = ()
+    autoretry_for: tuple[type[BaseException], ...] | None = None
     dont_autoretry_for: tuple[type[BaseException], ...] = ()
     retry_backoff: Any = None
     retry_backoff_max: float | None = None
@@ -209,7 +209,7 @@ class PotatoqBackend(BaseTaskBackend):
         # Read from the class: through the instance the function would be a bound method.
         if existing is not None and getattr(type(existing), "_django_func", None) is task.func:
             return existing
-        options = {opt: getattr(task, opt) for opt in _OPTIONS if getattr(task, opt, None) not in (None, ())}
+        options = {opt: getattr(task, opt) for opt in _OPTIONS if getattr(task, opt, None) is not None}
         backend_cls = type(self)
 
         def run(self_: PotatoqTaskImpl, *args: Any, **kwargs: Any) -> Any:

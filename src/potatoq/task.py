@@ -137,7 +137,7 @@ class Task:
     typing: bool = True
     max_retries: int | None = None
     default_retry_delay: float | None = None
-    autoretry_for: tuple[type[BaseException], ...] = ()
+    autoretry_for: tuple[type[BaseException], ...] | None = None  # None: task_autoretry_for
     dont_autoretry_for: tuple[type[BaseException], ...] = ()
     retry_kwargs: dict[str, Any] = {}
     retry_backoff: bool | float | None = None
@@ -214,6 +214,13 @@ class Task:
     def _opt(self, name: str, conf_name: str) -> Any:
         value = getattr(self, name)
         return self.app.conf[conf_name] if value is None else value
+
+    def resolved_autoretry_for(self) -> tuple[type[BaseException], ...]:
+        """The exceptions this task retries on: its own ``autoretry_for``, else the
+        app's ``task_autoretry_for`` (``autoretry_for=()`` opts a task out)."""
+        if self.autoretry_for is not None:
+            return tuple(self.autoretry_for)
+        return tuple(self.app.conf.task_autoretry_for or ())
 
     def resolved_max_retries(self) -> int | None:
         if self.max_retries is not None:

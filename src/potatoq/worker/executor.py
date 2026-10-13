@@ -355,11 +355,8 @@ def execute(
             finally:
                 _body.active = nested
         except Exception as exc:
-            if (
-                task.autoretry_for
-                and isinstance(exc, task.autoretry_for)
-                and not isinstance(exc, (Retry, Ignore, Reject))
-            ):
+            autoretry_for = task.resolved_autoretry_for()
+            if autoretry_for and isinstance(exc, autoretry_for) and not isinstance(exc, (Retry, Ignore, Reject)):
                 if not (task.dont_autoretry_for and isinstance(exc, task.dont_autoretry_for)):
                     try:
                         retry_opts = {
