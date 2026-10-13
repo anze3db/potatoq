@@ -65,9 +65,10 @@ def test_fifo_and_priority(broker_app):
 
 def test_eta_is_held_by_broker(broker_app):
     app = broker_app
-    m = msg(app, eta=time.time() + 1.2)
-    app.broker.enqueue([m])
     c = consumer(app)
+    assert fetch(c, 0) is None  # connect first: on a slow runner that alone can outlast the ETA
+    m = msg(app, eta=time.time() + 2.0)
+    app.broker.enqueue([m])
     assert fetch(c, 0.3) is None
     deadline = time.time() + 6
     d = None
