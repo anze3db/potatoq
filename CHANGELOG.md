@@ -11,6 +11,23 @@ next release. Everything else is generated from pull request titles by
 
 ## Unreleased
 
+## [26.1a4](https://github.com/anze3db/potatoq/releases/tag/26.1a4) - 2026-10-13
+
+### Changes
+
+* Dramatiq guide: max_retries defaults to 10 now
+* Supervisor: don't spin a core when the schedule is off or while shutting down
+
+<!-- Release notes generated using configuration in .github/release.yml at main -->
+
+
+
+**Full Changelog**: https://github.com/anze3db/potatoq/compare/26.1a3...26.1a4
+
+### Contributors
+
+Thank you to everyone who contributed to this release: @anze3db
+
 ## [26.1a3](https://github.com/anze3db/potatoq/releases/tag/26.1a3) - 2026-10-13
 
 ### Changes
