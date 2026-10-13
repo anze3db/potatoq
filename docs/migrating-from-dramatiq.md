@@ -53,7 +53,7 @@ send_welcome.delay(user.id)   # .send() works too, as an alias
 | `actor.send_with_options(args=..., kwargs=..., delay=60_000)` | `task.apply_async(args, kwargs, countdown=60)` |
 | `queue_name="x"` | `queue="x"` |
 | `priority=0` (lower runs first) | `priority=0` (**higher** runs first) |
-| `max_retries=20`, `min_backoff=`, `max_backoff=` (ms) | `autoretry_for=(Exception,)`, `max_retries=3`, `retry_backoff=10`, `retry_backoff_max=600` (s) |
+| `max_retries=20`, `min_backoff=`, `max_backoff=` (ms) | `autoretry_for=(Exception,)`, `max_retries=10`, `retry_backoff=10`, `retry_backoff_max=600` (s): the defaults, about 50 min of retrying |
 | `retry_when=`, `throws=` | `autoretry_for=(...)`, `dont_autoretry_for=(...)`, or `self.retry()` with `bind=True` |
 | `time_limit=` in ms, 10 min by default | `time_limit=` in s, 30 min by default; `soft_time_limit=` raises `SoftTimeLimitExceeded` first |
 | `max_age=` in ms (`AgeLimit`) | `expires=` in s, on the task or per call |
