@@ -30,6 +30,7 @@ next release. Everything else is generated from pull request titles by
 * Docs: retrying every task, how many times, backoff and jitter
 * Retry up to 10 times by default, about 50 minutes, instead of 3
 * Defaults tables: a task that raises is dead-lettered, said in the same row
+* Django tasks: refresh() of a task that's just finishing no longer raises
 
 <!-- Release notes generated using configuration in .github/release.yml at main -->
 

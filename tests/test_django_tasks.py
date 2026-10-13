@@ -153,6 +153,38 @@ def test_transaction_commit_semantics(django_env):
     app.broker.purge("shop")
 
 
+def test_refresh_while_the_task_finishes(django_env, monkeypatch):
+    """A refresh that reads a running task's placeholder result just before the task
+    finishes (its message gone by the next read) found no task name and raised."""
+    from django.tasks import TaskResultStatus
+    from djangoproj.shop.jobs import total
+
+    from potatoq import states
+    from potatoq.brokers.base import ResultRecord
+    from potatoq.testing import drain
+
+    app = django_env
+    result = total.enqueue(1, [1, 2])
+    drain(app, ["shop"])
+    finished = {"yet": False}
+    real_get_result = app.backend.get_result
+
+    def get_result(task_id):  # running until anyone peeks, finished from then on
+        if finished["yet"]:
+            return real_get_result(task_id)
+        return ResultRecord(task_id=task_id, state=states.STARTED)
+
+    def peek(task_id):
+        finished["yet"] = True
+        return None
+
+    monkeypatch.setattr(app.backend, "get_result", get_result)
+    monkeypatch.setattr(app.broker, "peek", peek)
+    result.refresh()
+    assert result.status == TaskResultStatus.SUCCESSFUL
+    assert result.return_value == {"order": 1, "total": 3}
+
+
 def test_real_worker_runs_django_tasks(django_env, tmp_path):
     """A `potatoq worker` process finds tasks outside tasks.py and runs them."""
     from django.tasks import TaskResultStatus

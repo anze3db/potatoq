@@ -285,8 +285,11 @@ class PotatoqBackend(BaseTaskBackend):
 
     def get_result(self, result_id: str) -> TaskResult:
         app = self.app
-        record = app.backend.get_result(result_id) if app.backend is not None else None
+        # The queued message first, then the result: a running task's placeholder result
+        # has no task name, and if the task finishes in between, its message is gone but
+        # its final result (which has one) is what we read next.
         peeked = app.broker.peek(result_id)
+        record = app.backend.get_result(result_id) if app.backend is not None else None
         if record is not None and (record.ready or peeked is None):
             name, args, kwargs = record.task_name, record.args or [], record.kwargs or {}
             status = _STATUS.get(record.state, TaskResultStatus.READY)
