@@ -33,6 +33,10 @@ Requires `potatoq[rabbitmq]` and RabbitMQ 4.0 or newer (4.3 recommended; CI test
   (Redis, Postgres or SQLite).
 - Without a result backend, a task killed for exceeding its hard time limit is
   redelivered until the delivery limit. The worker warns about this at startup.
+- Before RabbitMQ 4.3, a task given back to the queue counts towards its delivery limit
+  (`task_max_deliveries`, 5 by default). A task still running when a warm shutdown runs
+  out of time is given back, so a task cut short by five restarts in a row is
+  dead-lettered. From 4.3, giving a task back doesn't count.
 - Periodic tasks are sent by one elected worker. If it dies, a new one takes over within
   about 1 s, or about 60 s if its host or network went down. Runs due in that window can
   be skipped, or occasionally sent twice

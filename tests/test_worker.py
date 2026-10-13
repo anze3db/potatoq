@@ -62,8 +62,13 @@ def wapp(request, tmp_path):
     sys.path.insert(0, str(TESTS))
     import workerapp
 
-    # Producer side: same tasks, same configuration as the worker.
-    workerapp.app.conf.update(app.conf.changed())
+    # Producer side: same tasks, same configuration as the worker. workerapp.app is
+    # shared by every test in this process, so its configuration is restored afterwards:
+    # one test's beat_schedule or task_max_deliveries must not reach the next one's
+    # workers or the queues it declares.
+    conf = workerapp.app.conf
+    saved = dict(conf._data), set(conf._changed)
+    conf.update(app.conf.changed())
     workerapp.app.conf.broker_url = app.conf.broker_url
     workerapp.app._reset_connections()
     workerapp.app.set_current()
@@ -75,6 +80,10 @@ def wapp(request, tmp_path):
         workerapp.app.close()
         app.close()
         cleanup()
+        conf._data.clear()
+        conf._data.update(saved[0])
+        conf._changed.clear()
+        conf._changed.update(saved[1])
 
 
 def test_runs_tasks_and_stores_results(wapp, tmp_path):
