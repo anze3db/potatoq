@@ -34,15 +34,10 @@ For Django, `celery.py` itself is optional: add `"potatoq.contrib.django"` to
 
 potatoq uses its own compact, versioned message format, designed for what comes next
 rather than compatibility with Celery's protocol. Celery and potatoq don't consume each
-other's messages, so switch over like this:
-
-1. Deploy potatoq workers next to your Celery workers. potatoq creates its own queues
-   (`default` instead of `celery`, its own tables or keys), so the two never collide.
-2. Deploy the producers (web/app code) using potatoq. New tasks go to the new queues.
-3. When the old Celery queues are empty, stop the Celery workers.
-
-On RabbitMQ, potatoq needs quorum queues and fails fast on a name that's taken by an
-existing classic queue. Pick new queue names rather than reusing Celery's.
+other's messages, so run them side by side and [switch over](migrating.md#switching-over):
+potatoq workers first, then the producers, then stop Celery once its queues are empty.
+potatoq's queues are separate (`default` instead of `celery`, its own tables or keys), so
+the two never collide.
 
 ## 4. Things that behave differently, on purpose
 
@@ -52,6 +47,7 @@ existing classic queue. Pick new queue names rather than reusing Celery's.
 | Serializer | JSON, or pickle if you enabled it | JSON only | If you used pickle to pass model instances or other objects, pass primary keys and load inside the task. `.delay()` tells you which argument it can't send. |
 | `.delay()` inside a DB transaction | sent immediately | sent on commit, dropped on rollback | Nothing; this fixes `DoesNotExist` races. Opt out per task with `enqueue_on_commit=False` or globally with `task_enqueue_on_commit = False`. |
 | Time limit | none | 30 min hard, soft 30 s earlier | Raise it for long tasks: `@app.task(time_limit=4 * 3600)`. |
+| Automatic retries | none unless `autoretry_for` or `self.retry()` | the same | Nothing. |
 | `self.retry()` without countdown | 180 s | exponential backoff (about 10 s, 20 s, 40 s …) | Set `default_retry_delay` on the task (or `task_retry_backoff = False`) to get the old behaviour. |
 | Failed tasks | discarded | dead-lettered (`potatoq dead list`) | Nothing. Disable with `task_dead_letter_failures = False`. |
 | Results on Redis/RabbitMQ | only if `result_backend` is set | the same | Nothing. On Postgres/SQLite brokers results are on by default. |
@@ -84,27 +80,4 @@ The full list of gaps and planned features is in the [wishlist](wishlist.md).
   `potatoq status` and `potatoq inspect` read worker heartbeats instead.
 * Redis Cluster, `solar` schedules, `chunks` (implemented via `starmap`, lightly tested).
 
-## Coming from Dramatiq
-
-The same steps apply: new queues, then drain the old ones. The API differs more:
-
-| Dramatiq | potatoq |
-|---|---|
-| `@dramatiq.actor` | `@shared_task` (or `@app.task`) |
-| `actor.send(*args, **kwargs)` | `task.delay(*args, **kwargs)` |
-| `actor.send_with_options(args=..., delay=60_000)` | `task.apply_async(args, countdown=60)`: seconds, not milliseconds |
-| `time_limit=` in milliseconds, default 10 min | `time_limit=` in seconds, default 30 min |
-| `python manage.py rundramatiq --processes 1 --threads 2` | `python manage.py potatoq worker -c 1 -t 2` |
-| `DRAMATIQ_AUTODISCOVER_MODULES` | `tasks.py` in every app, plus the `imports` setting |
-| Results middleware | results are stored on database brokers by default; set `task_ignore_result = True` if nothing reads them |
-| `DramatiqTestCase`, `broker.join()` | `TransactionTestCase` and [`drain`](guide/testing.md) |
-
-!!! warning "Retries are opt-in"
-    Dramatiq's retry middleware retries **every** exception, up to 20 times with
-    backoff. potatoq, like Celery, only retries what you ask for. A failing task goes to
-    the [dead-letter store](guide/retries-and-failures.md#dead-letters) instead. To keep
-    Dramatiq's behaviour, add `autoretry_for=(Exception,), max_retries=...` to the tasks
-    that relied on it.
-
-After removing `django_dramatiq` from `INSTALLED_APPS`, drop its leftover table:
-`DROP TABLE django_dramatiq_task;` and `DELETE FROM django_migrations WHERE app = 'django_dramatiq';`.
+Coming from Dramatiq instead? See [Migrating from Dramatiq](migrating-from-dramatiq.md).

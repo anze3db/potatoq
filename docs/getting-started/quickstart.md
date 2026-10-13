@@ -68,6 +68,6 @@ $ potatoq -A proj.tasks dead list   # tasks that failed for good, and why
 -   :lucide-database: **[Choose a broker](choosing-a-broker.md)**: Postgres, Redis, RabbitMQ or SQLite?
 -   :lucide-boxes: **[Django](../integrations/django.md)**: zero configuration, tasks committed with your transactions
 -   :lucide-rotate-ccw: **[Retries and failures](../guide/retries-and-failures.md)**: backoff, time limits, dead letters
--   :lucide-arrow-right-left: **[Migrating from Celery](../migrating-from-celery.md)**: mostly a find-and-replace
+-   :lucide-arrow-right-left: **[Migrating](../migrating.md)**: from Celery (mostly a find-and-replace) or Dramatiq
 
 </div>

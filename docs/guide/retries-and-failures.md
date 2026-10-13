@@ -6,6 +6,13 @@ flip side is that tasks must be **idempotent**: occasionally a task runs twice.
 
 ## Retrying
 
+!!! warning "Retries are opt-in"
+    A task that raises fails: it's recorded as `FAILURE` and dead-lettered, and it
+    is **not retried** unless you ask for it, with `autoretry_for` or `self.retry()`.
+    This is Celery's behaviour. Dramatiq and Sidekiq retry every exception by
+    default, so code migrated from them needs `autoretry_for=(Exception,)` where it
+    relied on that.
+
 ```python
 @app.task(bind=True, max_retries=5)
 def charge(self, order_id):
@@ -23,6 +30,8 @@ def charge(order_id):
     gateway.charge(order_id)
 ```
 
+- `max_retries` defaults to 3 (`task_max_retries`): with `autoretry_for`, the fourth
+  failure dead-letters the task.
 - Retries are scheduled by the broker; nothing waits in worker memory.
 - The default delay is exponential backoff with jitter (`task_retry_backoff = 10`, capped
   at `task_retry_backoff_max = 600`). Setting `default_retry_delay` on a task, or passing

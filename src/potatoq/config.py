@@ -38,7 +38,7 @@ DEFAULTS: dict[str, Any] = {
     "task_soft_time_limit": None,  # defaults to a bit before the hard limit
     "task_default_retry_delay": 180,  # used only when backoff is disabled
     "task_max_retries": 3,  # for self.retry()/autoretry_for, Celery compatible
-    "task_retry_backoff": 10,  # exponential: ~10s, 20s, 40s ... (full jitter)
+    "task_retry_backoff": 10,  # exponential: ~10s, 20s, 40s ... (equal jitter)
     "task_retry_backoff_max": 600,
     "task_retry_jitter": True,
     "task_dead_letter_failures": True,  # keep terminally failed tasks for inspection/replay

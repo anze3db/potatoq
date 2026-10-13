@@ -39,7 +39,11 @@ nav = [
     "brokers/rabbitmq.md",
     "brokers/sqlite.md",
   ] },
-  { "Migrating from Celery" = "migrating-from-celery.md" },
+  { "Migrating" = [
+    "migrating.md",
+    "migrating-from-celery.md",
+    "migrating-from-dramatiq.md",
+  ] },
   { "Changelog" = "changelog.md" },
   { "Wishlist" = "wishlist.md" },
   { "Reference" = [
