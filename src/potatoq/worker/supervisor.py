@@ -520,8 +520,9 @@ class Supervisor:
             "tick": now + 1.0,
             "maintenance": now + random.uniform(30, 90),
             "registered": now + self.registered_refresh,
-            "scheduler": now + 0.5,
         }
+        if self.scheduler is not None:
+            timers["scheduler"] = now + 0.5
         while True:
             self._handle_signals()
             now = time.monotonic()
@@ -529,7 +530,10 @@ class Supervisor:
                 if not self.children:
                     return
                 self._shutdown_step(now)
-            timeout = max(0.0, min(min(timers.values()) - now, 0.5))
+            # Only timers that get serviced: one left in the past would make select(0)
+            # return at once and spin a core. A shutdown services only the heartbeat.
+            due = timers["heartbeat"] if self.shutting_down else min(timers.values())
+            timeout = max(0.0, min(due - now, 0.5))
             for key, _ in self.selector.select(timeout):
                 if key.data is None:
                     try:

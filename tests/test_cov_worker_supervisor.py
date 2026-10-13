@@ -699,6 +699,34 @@ def test_loop_recovers_dead_nodes_and_runs_maintenance(app, sup, monkeypatch):
     assert [m.task for m in published] == ["cov.errback"]
 
 
+@pytest.mark.parametrize("phase", ["idle", "shutting down"])
+def test_loop_sleeps_until_the_next_timer(sup, monkeypatch, phase):
+    """No timer may stay in the past: the loop would select(0) and spin a core. Without a
+    scheduler (schedule: off) the scheduler timer was never advanced; during a shutdown
+    only the heartbeat is serviced."""
+    assert sup.scheduler is None
+    clock = [1000.0]
+    monkeypatch.setattr(sup_mod.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(sup, "_reap", lambda: None)
+    if phase == "shutting down":
+        sup.shutting_down = True
+        sup.children = {1: child_with(sup)}
+        monkeypatch.setattr(sup, "_shutdown_step", lambda now: None)
+    timeouts: list[float] = []
+
+    def select(timeout):
+        timeouts.append(timeout)
+        clock[0] += timeout  # as if it waited that long
+        if len(timeouts) == 50:  # about 25 s of loop time with a 0.5 s cap
+            sup.shutting_down = True
+            sup.children = {}
+        return []
+
+    monkeypatch.setattr(sup.selector, "select", select)
+    sup._loop()
+    assert 0 not in timeouts[:50]
+
+
 def test_loop_survives_errors(app, sup, monkeypatch, caplog):
     monkeypatch.setattr(sup_mod.random, "uniform", lambda a, b: 0.0)
     reaps: list[int] = []
