@@ -111,13 +111,13 @@ $ potatoq -A proj worker
 | | Celery | potatoq |
 |---|---|---|
 | Acknowledgement | before running: <span class="pq-bad">a crash loses the task</span> | <span class="pq-good">after it finishes</span> |
-| Worker process killed (OOM) | <span class="pq-bad">task lost</span> | <span class="pq-good">requeued; dead-lettered after 5 crashes</span> |
+| Worker process killed (OOM, segfault) | <span class="pq-bad">task lost</span> | <span class="pq-good">requeued; dead-lettered after 5 crashes</span> |
+| Task raises an exception | failed, not retried (retries are opt-in) | failed, not retried (retries are opt-in) |
+| Retry delay | fixed 180 s | <span class="pq-good">exponential backoff with jitter</span> |
 | Prefetch | 4 × concurrency | <span class="pq-good">one task per idle process</span> |
 | ETA / countdown | held in worker RAM | <span class="pq-good">stored by the broker</span> |
 | Long tasks on Redis | <span class="pq-bad">re-run every hour</span> | <span class="pq-good">leases renewed while running</span> |
 | Time limits | none | <span class="pq-good">30 min, soft 30 s earlier</span> |
-| Task raises an exception | failed, not retried (retries are opt-in) | failed, not retried (retries are opt-in) |
-| Retry delay | fixed 180 s | <span class="pq-good">exponential backoff with jitter</span> |
 | Failed tasks | discarded | <span class="pq-good">dead-letter store, replayable</span> |
 | `.delay()` inside `atomic()` | sent immediately | <span class="pq-good">sent on commit</span> |
 | Scheduler | separate `beat` process | <span class="pq-good">built into every worker, deduplicated</span> |
