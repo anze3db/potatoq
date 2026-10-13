@@ -27,7 +27,13 @@ hide:
 [Get started](getting-started/quickstart.md){ .md-button .md-button--primary }
 [Migrating from Celery](migrating-from-celery.md){ .md-button }
 
-<div class="pq-install">uv add potatoq</div>
+<div class="pq-install" data-copy="uv add potatoq" markdown>
+
+```console
+$ uv add potatoq
+```
+
+</div>
 
 </div>
 

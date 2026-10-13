@@ -81,15 +81,16 @@
 }
 .md-typeset .pq-hero .md-button--primary:hover { background: var(--pq-amber-light); border-color: var(--pq-amber-light); }
 
-.pq-install {
+/* A real code block (copy button included), sized to the command. */
+.md-typeset .pq-install {
   display: inline-block;
-  font-family: var(--md-code-font-family);
-  font-size: 0.85rem;
-  padding: 0.4rem 1rem;
-  border-radius: 999px;
-  background: var(--md-code-bg-color);
+  min-width: 16rem;
   margin-top: 0.8rem;
+  text-align: left;
 }
+.md-typeset .pq-install pre { margin: 0; }
+.md-typeset .pq-install pre > code { font-size: 0.85rem; padding-right: 3rem; }
+.md-typeset .pq-install .md-code__button:not([data-md-type="copy"]) { display: none; }  /* one line: no line selection */
 
 .md-typeset .grid.cards > ul > li {
   border-radius: 14px;
