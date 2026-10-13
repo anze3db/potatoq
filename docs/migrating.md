@@ -26,8 +26,9 @@ These defaults catch people coming from every library:
 !!! warning "Retries are opt-in"
     A task that raises is recorded as failed and dead-lettered; it's **not retried**
     unless you ask with `autoretry_for` or `self.retry()`. Celery behaves the same way,
-    but Dramatiq and Sidekiq retry every exception by default.
-    [Retries and failures](guide/retries-and-failures.md)
+    but Dramatiq and Sidekiq retry every exception by default: set
+    `task_autoretry_for = (Exception,)` to
+    [retry every task](guide/retries-and-failures.md#retrying-every-task).
 
 - **At-least-once delivery.** A task is acknowledged after it finishes, so a crash or a
   deploy never loses it, and it occasionally runs twice: make tasks idempotent.

@@ -8,9 +8,21 @@ about retries.
     Dramatiq retries **every** exception, up to 20 times, with backoff from 15 seconds
     to 7 days. potatoq, like Celery, retries nothing unless you ask: a task that raises
     is recorded as failed and goes to the
-    [dead-letter store](guide/retries-and-failures.md#dead-letters). Add
-    `autoretry_for=(Exception,)` to every task that relied on Dramatiq retrying it;
-    `max_retries` defaults to 3.
+    [dead-letter store](guide/retries-and-failures.md#dead-letters). To retry every
+    task as before, set it once:
+
+    ```python
+    POTATOQ = {
+        "task_autoretry_for": (Exception,),
+        # Optional, Dramatiq's own schedule: 20 retries, 15 s doubling up to 7 days.
+        "task_max_retries": 20,
+        "task_retry_backoff": 15,
+        "task_retry_backoff_max": 7 * 24 * 3600,
+    }
+    ```
+
+    Tasks that must not run twice opt out with `autoretry_for=()`. See
+    [retrying every task](guide/retries-and-failures.md#retrying-every-task).
 
 ## 1. Swap the code
 
@@ -125,7 +137,7 @@ transaction: tasks are sent on commit. See [Testing](guide/testing.md).
 
 | Area | Dramatiq | potatoq | What to do |
 |---|---|---|---|
-| Retries | every exception, 20 times, 15 s … 7 days | only `autoretry_for` or `self.retry()`; 3 times, about 10 s, 20 s, 40 s … 10 min | Add `autoretry_for=(Exception,)` where you relied on it |
+| Retries | every exception, 20 times, 15 s … 7 days | only `autoretry_for` or `self.retry()`; 3 times, about 10 s, 20 s, 40 s … 10 min | Set `task_autoretry_for = (Exception,)` |
 | Units | milliseconds | seconds | Divide `delay`, `time_limit`, `max_age`, backoffs by 1000 |
 | Time limit | 10 min | 30 min, soft limit 30 s earlier | Set `time_limit` where 10 min mattered |
 | Priority | lower number first | higher number first | Invert priorities |

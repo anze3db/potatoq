@@ -8,10 +8,11 @@ flip side is that tasks must be **idempotent**: occasionally a task runs twice.
 
 !!! warning "Retries are opt-in"
     A task that raises fails: it's recorded as `FAILURE` and dead-lettered, and it
-    is **not retried** unless you ask for it, with `autoretry_for` or `self.retry()`.
-    This is Celery's behaviour. Dramatiq and Sidekiq retry every exception by
-    default, so code migrated from them needs `autoretry_for=(Exception,)` where it
-    relied on that.
+    is **not retried** unless you ask for it, per task or
+    [for every task](#retrying-every-task). This is Celery's behaviour. Dramatiq and
+    Sidekiq retry every exception by default; to get that, set `task_autoretry_for`.
+
+Retry from inside the task:
 
 ```python
 @app.task(bind=True, max_retries=5)
@@ -22,23 +23,113 @@ def charge(self, order_id):
         raise self.retry(exc=exc)                 # backoff: ~10 s, 20 s, 40 s ... max 10 min
 ```
 
-Or let potatoq do it:
+Or let potatoq do it for some exceptions:
 
 ```python
-@app.task(autoretry_for=(gateway.Timeout,), max_retries=5)
+@app.task(autoretry_for=(gateway.Timeout,), dont_autoretry_for=(gateway.CardDeclined,), max_retries=5)
 def charge(order_id):
     gateway.charge(order_id)
 ```
 
-- `max_retries` defaults to 3 (`task_max_retries`): with `autoretry_for`, the fourth
-  failure dead-letters the task.
 - Retries are scheduled by the broker; nothing waits in worker memory.
-- The default delay is exponential backoff with jitter (`task_retry_backoff = 10`, capped
-  at `task_retry_backoff_max = 600`). Setting `default_retry_delay` on a task, or passing
-  `countdown=`/`eta=` to `retry()`, gives a fixed delay.
-- When retries run out, `retry(exc=exc)` re-raises `exc`; a bare `retry()` raises
+- When retries run out, the task fails and is dead-lettered: `retry(exc=exc)` and
+  `autoretry_for` re-raise the exception, a bare `retry()` raises
   `MaxRetriesExceededError`.
 - A retry keeps the task id, so `AsyncResult` follows it to its final state.
+
+### Retrying every task
+
+`task_autoretry_for` gives every task an `autoretry_for`:
+
+=== "Django"
+
+    ```python title="settings.py"
+    POTATOQ = {
+        "task_autoretry_for": (Exception,),   # retry on any error, like Dramatiq and Sidekiq
+    }
+    ```
+
+=== "Python"
+
+    ```python
+    app.conf.task_autoretry_for = (Exception,)
+    ```
+
+A task's own `autoretry_for` replaces it, and `autoretry_for=()` turns retries off for
+one task (one that charges a card, say). `dont_autoretry_for` still applies. The worker's
+banner shows the policy:
+
+```console
+   retries   on Exception, up to 3 times, backoff from 10.0s, capped at 10m00s
+```
+
+Only retry tasks that are safe to run again: a task that sends an email and then raises
+sends the email again on every retry.
+
+### How many times
+
+`max_retries` counts retries after the first run: with the default of 3, a task runs at
+most four times. Set it per task, or for every task with `task_max_retries`
+(`None` retries without a limit):
+
+```python
+@app.task(autoretry_for=(Exception,), max_retries=10)
+def sync_inventory(): ...
+
+app.conf.task_max_retries = 5        # the default for tasks that don't set max_retries
+```
+
+`self.retry(max_retries=...)` overrides both for that one call.
+
+### Backoff
+
+The delay before a retry grows exponentially:
+
+```text
+delay = min(retry_backoff_max, retry_backoff × 2 ** retries_so_far)
+```
+
+With the defaults (`task_retry_backoff = 10`, `task_retry_backoff_max = 600`), the
+delays are about 10 s, 20 s, 40 s, 80 s, 160 s, 320 s, then 10 minutes for every retry
+after that. Change them per task or for every task:
+
+```python
+@app.task(autoretry_for=(Exception,), retry_backoff=60, retry_backoff_max=3600)
+def import_feed(): ...      # 1 min, 2 min, 4 min ... capped at 1 hour
+
+app.conf.task_retry_backoff = 5
+app.conf.task_retry_backoff_max = 300
+```
+
+`retry_backoff=True` means a factor of 1 (1 s, 2 s, 4 s …), as in Celery. A fixed delay
+replaces the backoff in three cases: `retry_backoff=False` (then `default_retry_delay`,
+180 s by default via `task_default_retry_delay`, is used every time), a
+`default_retry_delay` set on a task that doesn't set `retry_backoff`, and an explicit
+`self.retry(countdown=...)` or `eta=`.
+
+### Jitter
+
+Tasks that failed together, because a dependency went down, would otherwise retry
+together and hit it all at once again. Jitter spreads them out: each delay is a random
+value between **half the computed delay and the full delay** ("equal jitter"). The first
+retry of a task with the default backoff waits between 5 and 10 seconds, the second
+between 10 and 20, and so on. A retry never happens immediately, unlike Celery's full
+jitter (anywhere from 0 to the delay).
+
+Turn it off with `retry_jitter=False` on a task, or `task_retry_jitter = False` for
+every task, to get the exact delays.
+
+### Settings at a glance
+
+| Task option | App setting | Default | |
+|---|---|---|---|
+| `autoretry_for` | `task_autoretry_for` | `()` | Exceptions that retry automatically |
+| `dont_autoretry_for` | | `()` | Exceptions that never do |
+| `max_retries` | `task_max_retries` | `3` | Retries after the first run; `None` (app setting): no limit |
+| `retry_backoff` | `task_retry_backoff` | `10` | First delay in seconds, doubled each retry; `False`: fixed delay |
+| `retry_backoff_max` | `task_retry_backoff_max` | `600` | Longest delay |
+| `retry_jitter` | `task_retry_jitter` | `True` | Randomize each delay between half and all of it |
+| `default_retry_delay` | `task_default_retry_delay` | `180` | Fixed delay when backoff is off |
 
 ## Time limits
 
