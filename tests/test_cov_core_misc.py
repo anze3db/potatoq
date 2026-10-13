@@ -443,8 +443,12 @@ def test_drain_runs_scheduled_tasks_on_sqlite(tmp_path):
         app.close()
 
 
-def test_scheduled_tasks_are_not_fast_forwarded_on_other_brokers():
-    assert _next_scheduled(types.SimpleNamespace(broker=object()), consumer=None) is None
+def test_drain_warns_where_it_cant_skip_ahead():
+    from potatoq.brokers.base import Broker
+
+    broker = Broker.__new__(Broker)  # no promote_next_scheduled, like RabbitMQ
+    with pytest.warns(UserWarning, match="can't skip ahead to countdowns, ETAs and retries on Broker"):
+        assert _next_scheduled(types.SimpleNamespace(broker=broker), consumer=None, queues=["q"]) is None
 
 
 @pytest.mark.parametrize(

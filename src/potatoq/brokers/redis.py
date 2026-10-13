@@ -118,6 +118,24 @@ elseif cmd == 'periodic' then
   enqueue(6, 1, now_ms())
   return 1
 
+elseif cmd == 'promote_next' then
+  -- queues: make the earliest scheduled task among them ready now (testing.drain)
+  local best_q, best_id, best_at
+  for i = 3, #ARGV do
+    local first = redis.call('ZRANGE', qkey(ARGV[i]) .. ':delayed', 0, 0, 'WITHSCORES')
+    if #first > 0 and (not best_at or tonumber(first[2]) < best_at) then
+      best_q, best_id, best_at = ARGV[i], first[1], tonumber(first[2])
+    end
+  end
+  if not best_id then return 0 end
+  redis.call('ZREM', qkey(best_q) .. ':delayed', best_id)
+  local pr = redis.call('HGET', jkey(best_id), 'pr')
+  if pr then  -- revoked jobs have no hash
+    redis.call('HSET', jkey(best_id), 'st', 'ready')
+    push_ready(best_q, best_id, tonumber(pr), false)
+  end
+  return 1
+
 elseif cmd == 'claim' then
   -- queue, worker, pid, lease_ms, token
   local q, worker, pid, lease, tok = ARGV[3], ARGV[4], ARGV[5], tonumber(ARGV[6]), ARGV[7]
@@ -397,6 +415,9 @@ class RedisBroker(Broker):
 
     def last_periodic_runs(self) -> dict[str, float]:
         return {_s(k): float(v) for k, v in self.client.hgetall(f"{self.prefix}:periodic-last").items()}
+
+    def promote_next_scheduled(self, queues: list[str]) -> bool:
+        return bool(self.run("promote_next", *queues))
 
     def consumer(self, queues: list[str], worker_id: str, pid: int | None = None) -> RedisConsumer:
         return RedisConsumer(self, queues, worker_id, pid)

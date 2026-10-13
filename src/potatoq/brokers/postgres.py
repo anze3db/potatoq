@@ -463,6 +463,21 @@ class PostgresBroker(Broker):
 
         self._run(_tick)
 
+    def promote_next_scheduled(self, queues: list[str]) -> bool:
+        def _promote(conn: psycopg.Connection) -> bool:
+            with conn.transaction():
+                row = conn.execute(
+                    self._sql(
+                        "UPDATE {jobs} SET state = 1, run_at = now() WHERE seq = (SELECT seq FROM {jobs} "
+                        "WHERE state = 0 AND queue = ANY(%s) ORDER BY run_at LIMIT 1 FOR UPDATE SKIP LOCKED) "
+                        "RETURNING seq"
+                    ),
+                    (queues,),
+                ).fetchone()
+            return row is not None
+
+        return bool(self._run(_promote))
+
     def maintenance(self) -> None:
         conf = self.app.conf
 

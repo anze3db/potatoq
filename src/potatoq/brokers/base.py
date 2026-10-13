@@ -249,6 +249,11 @@ class Broker:
     def tick(self) -> None:
         """Frequent housekeeping (about once a second): promote due scheduled tasks."""
 
+    def promote_next_scheduled(self, queues: list[str]) -> bool:
+        """For ``potatoq.testing.drain``: make the earliest scheduled task (countdown,
+        ETA or retry) in ``queues`` ready now. False if there is none."""
+        raise NotImplementedError
+
     def lost_deliveries(self, worker_id: str, pid: int) -> list[Delivery]:
         """Tasks still claimed by a child process that died."""
         return []

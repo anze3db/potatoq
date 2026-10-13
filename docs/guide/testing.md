@@ -23,7 +23,10 @@ def test_signup():
 of `DrainedTask(id, name, args, kwargs, state, result, exception)`. Tasks with a
 countdown or a retry delay run without waiting: time is skipped ahead.
 
-It works with the SQLite broker too, for tests that need real cross-process behaviour.
+It works the same on the SQLite, Postgres and Redis brokers, so a Django test can drain
+the database broker it really uses. RabbitMQ is the exception: its delays live inside the
+broker, so `drain` runs only what's ready and warns that countdowns and retries were
+left behind. Test with `memory://` there.
 
 ## Periodic tasks
 

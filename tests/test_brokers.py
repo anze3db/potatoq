@@ -286,3 +286,35 @@ def test_task_started_state_visible(broker_app):
     assert app.AsyncResult(m.id).state == states.STARTED
     c.complete(d, None, [])
     c.close()
+
+
+def test_drain_skips_ahead_to_countdowns_and_retries(broker_app):
+    from potatoq.testing import drain
+
+    app = broker_app
+    attempts = []
+
+    @app.task(name="t.later")
+    def later(x):
+        return x * 2
+
+    @app.task(name="t.flaky", bind=True, max_retries=2, default_retry_delay=3600)
+    def flaky(self):
+        attempts.append(1)
+        if len(attempts) < 3:
+            raise self.retry()
+        return "done"
+
+    later.apply_async((21,), countdown=3600)
+    if app.kind == "rabbitmq":  # delays live in the broker: drain() can't skip ahead
+        with pytest.warns(UserWarning, match="can't skip ahead"):
+            assert drain(app) == []
+        return
+    flaky.delay()
+    done = drain(app)
+    assert sorted((d.name, d.state, d.result) for d in done) == [
+        ("t.flaky", "RETRY", None),
+        ("t.flaky", "RETRY", None),
+        ("t.flaky", "SUCCESS", "done"),
+        ("t.later", "SUCCESS", 42),
+    ]

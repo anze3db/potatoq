@@ -83,6 +83,20 @@ class MemoryBroker(Broker):
                     self.jobs[job_id]["state"] = "ready"
                     self._push_ready(job_id)
 
+    def promote_next_scheduled(self, queues: list[str]) -> bool:
+        with self.lock:
+            waiting = [e for e in self.delayed if self.jobs.get(e[2], {}).get("state") == "delayed"]
+            waiting = [e for e in waiting if self.jobs[e[2]]["queue"] in queues]
+            if not waiting:
+                return False
+            entry = min(waiting)
+            self.delayed.remove(entry)
+            heapq.heapify(self.delayed)
+            self.jobs[entry[2]]["state"] = "ready"
+            self._push_ready(entry[2])
+            self.lock.notify_all()
+            return True
+
     def consumer(self, queues: list[str], worker_id: str, pid: int | None = None) -> MemoryConsumer:
         return MemoryConsumer(self, queues, worker_id, pid)
 

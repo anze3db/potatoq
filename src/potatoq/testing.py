@@ -15,7 +15,7 @@ are serialized, retries are rescheduled, chains/chords go through the broker, an
 from __future__ import annotations
 
 import dataclasses
-import time
+import warnings
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -51,7 +51,8 @@ def drain(
     """Run queued tasks in this process until the queues are empty.
 
     ``include_scheduled`` also runs tasks with an ETA/countdown and retries (time is
-    skipped ahead, they are not waited for).
+    skipped ahead, they are not waited for), on every broker but RabbitMQ, whose delays
+    live in the broker (it warns there).
     """
     broker = app.broker
     if queues is None:
@@ -61,7 +62,7 @@ def drain(
     for _ in range(max_tasks):
         delivery = consumer.fetch(timeout=0)
         if delivery is None and include_scheduled:
-            delivery = _next_scheduled(app, consumer)
+            delivery = _next_scheduled(app, consumer, queues)
         if delivery is None:
             break
         message = delivery.message
@@ -77,28 +78,19 @@ def drain(
     return done
 
 
-def _next_scheduled(app: Potatoq, consumer: Any) -> Any:
-    """Make the earliest scheduled task due now and fetch it (memory and SQL brokers)."""
-    broker = app.broker
-    from .brokers.memory import MemoryBroker
-
-    if isinstance(broker, MemoryBroker):
-        with broker.lock:
-            if not broker.delayed:
-                return None
-            eta = broker.delayed[0][0]
-        broker.promote(now=eta)
-        return consumer.fetch(timeout=0)
-    from .brokers.sqlite import SQLiteBroker
-
-    if isinstance(broker, SQLiteBroker):
-        with broker._write() as conn:
-            conn.execute(
-                "UPDATE potatoq_jobs SET state = 1, run_at = ? WHERE seq = (SELECT seq FROM potatoq_jobs WHERE state = 0 ORDER BY run_at LIMIT 1)",
-                (time.time(),),
-            )
-        consumer._data_version = None
-        return consumer.fetch(timeout=0)
+def _next_scheduled(app: Potatoq, consumer: Any, queues: list[str]) -> Any:
+    """Make the earliest scheduled task due now and fetch it."""
+    try:
+        while app.broker.promote_next_scheduled(queues):
+            delivery = consumer.fetch(timeout=0)
+            if delivery is not None:
+                return delivery  # else it was revoked: try the next one
+    except NotImplementedError:
+        warnings.warn(
+            f"drain() can't skip ahead to countdowns, ETAs and retries on {type(app.broker).__name__}: "
+            "they stay in the broker. Test with memory://, SQLite, Postgres or Redis to run them.",
+            stacklevel=3,
+        )
     return None
 
 

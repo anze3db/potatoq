@@ -333,6 +333,16 @@ class SQLiteBroker(Broker):
         with self._write() as conn:
             conn.execute("UPDATE potatoq_jobs SET state = 1 WHERE state = 0 AND run_at <= ?", (time.time(),))
 
+    def promote_next_scheduled(self, queues: list[str]) -> bool:
+        marks = ", ".join("?" * len(queues))
+        with self._write() as conn:
+            cur = conn.execute(
+                "UPDATE potatoq_jobs SET state = 1, run_at = ? WHERE seq = (SELECT seq FROM potatoq_jobs "
+                f"WHERE state = 0 AND queue IN ({marks}) ORDER BY run_at LIMIT 1)",
+                (time.time(), *queues),
+            )
+            return cur.rowcount > 0
+
     def maintenance(self) -> None:
         now = time.time()
         with self._write() as conn:
