@@ -8,7 +8,7 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
-from conftest import make_app, rabbitmq_available
+from conftest import RABBITMQ_URL, make_app, rabbitmq_available
 
 pika = pytest.importorskip("pika")
 
@@ -20,8 +20,6 @@ from potatoq.brokers.base import Delivery, ResultRecord  # noqa: E402
 from potatoq.brokers.rabbitmq import RabbitMQBroker, _check_queue_name, _params, delay_route  # noqa: E402
 from potatoq.exceptions import ImproperlyConfigured  # noqa: E402
 from potatoq.message import Message  # noqa: E402
-
-RAW_URL = "amqp://guest:guest@localhost:5672/%2F"
 
 
 def offline_broker(url: str = "amqp://guest:guest@localhost:5672//", **conf) -> RabbitMQBroker:
@@ -158,7 +156,7 @@ def rmq(tmp_path):
 
 
 def delete_queues(*names):
-    conn = pika.BlockingConnection(pika.URLParameters(RAW_URL))
+    conn = pika.BlockingConnection(_params(RABBITMQ_URL, 10))
     ch = conn.channel()
     for name in names:
         for q in (name, f"{name}.dlq"):
@@ -211,7 +209,7 @@ def test_coordination_through_the_result_backend(rmq):
 
 def test_declare_queue_with_different_arguments(rmq):
     name = extra_queue(rmq, "classic")
-    conn = pika.BlockingConnection(pika.URLParameters(RAW_URL))
+    conn = pika.BlockingConnection(_params(RABBITMQ_URL, 10))
     conn.channel().queue_declare(name, durable=True)  # what Celery would have created
     conn.close()
     broker = rmq.broker

@@ -94,6 +94,43 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
 
+  oldest-servers:
+    # The oldest server versions the docs promise (docs/getting-started/choosing-a-broker.md).
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        redis: ["redis:6.2", "valkey/valkey:7.2"]
+    services:
+      redis:
+        image: ${{ matrix.redis }}
+        ports: ["6379:6379"]
+      postgres:
+        image: postgres:13
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: potatoq_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 5s --health-retries 20
+      rabbitmq:
+        image: rabbitmq:4.0-management
+        ports: ["5672:5672"]
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping" --health-interval 5s --health-timeout 10s --health-retries 20
+    env:
+      POTATOQ_TEST_POSTGRES: postgresql://postgres:postgres@localhost:5432/potatoq_test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.11"
+      - run: uv sync --python 3.11
+      - run: uv run --no-sync pytest -q -n 4 --dist loadgroup -m "not serial"
+
   coverage:
     # All test jobs together must cover 100% of the code.
     needs: [test, django-6-0]

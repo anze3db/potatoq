@@ -97,7 +97,9 @@ def make_app(kind: str, tmp_path, *, results: bool = True, **conf) -> tuple[Pota
             import pika
             import redis
 
-            conn = pika.BlockingConnection(pika.URLParameters("amqp://guest:guest@localhost:5672/%2F"))
+            from potatoq.brokers.rabbitmq import _params
+
+            conn = pika.BlockingConnection(_params(RABBITMQ_URL, 10))
             ch = conn.channel()
             for name in (queue, f"{queue}.dlq", "other" + token, f"other{token}.dlq"):
                 try:

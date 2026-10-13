@@ -42,6 +42,14 @@ print("OK")
 def test_django_postgres_transactional_enqueue():
     if not postgres_available() or "localhost" not in POSTGRES_URL:
         pytest.skip("local Postgres not available")
+    import django
+    import psycopg
+    from django.db.backends.postgresql.features import DatabaseFeatures
+
+    with psycopg.connect(POSTGRES_URL) as conn:
+        server = conn.info.server_version // 10000
+    if (server,) < DatabaseFeatures.minimum_database_version:  # potatoq itself supports older ones
+        pytest.skip(f"Django {django.get_version()} doesn't support PostgreSQL {server}")
     schema = f"test_dj_{uuid.uuid4().hex[:8]}"
     env = {
         **os.environ,

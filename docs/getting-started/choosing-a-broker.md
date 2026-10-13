@@ -9,18 +9,24 @@ Every broker supports the full feature set (delays, priorities, retries, dead le
 chords and periodic tasks), each implemented with its own native primitives. Choose
 based on what you already run.
 
-| Broker | Best for | Extra infrastructure | Transactional enqueue | Results | Throughput¹ |
-|---|---|---|---|---|---:|
-| [**Postgres**](../brokers/postgres.md) | most apps | none (your database) | :lucide-check: | built in | ~7.5k/s |
-| [**Redis / Valkey**](../brokers/redis.md) | high throughput | Redis | on commit | opt-in | ~12k/s |
-| [**RabbitMQ**](../brokers/rabbitmq.md) | RabbitMQ shops | RabbitMQ 4.x | on commit | separate backend | ~7k/s |
-| [**SQLite**](../brokers/sqlite.md) | development, single host | none (a file) | :lucide-check: | built in | ~6k/s |
+| Broker | Best for | Extra infrastructure | Needs | Transactional enqueue | Results | Throughput¹ |
+|---|---|---|---|---|---|---:|
+| [**Postgres**](../brokers/postgres.md) | most apps | none (your database) | PostgreSQL 13+ | :lucide-check: | built in | ~7.5k/s |
+| [**Redis / Valkey**](../brokers/redis.md) | high throughput | Redis | Redis 6.2+, Valkey 7.2+ | on commit | opt-in | ~12k/s |
+| [**RabbitMQ**](../brokers/rabbitmq.md) | RabbitMQ shops | RabbitMQ | RabbitMQ 4.0+ | on commit | separate backend | ~7k/s |
+| [**SQLite**](../brokers/sqlite.md) | development, single host | none (a file) | SQLite 3.35+² | :lucide-check: | built in | ~6k/s |
 
 "On commit": a transactional enqueue needs the queue in your database, so these brokers
 send tasks right after `COMMIT` instead.
 
 ¹ No-op tasks per second, 4 worker processes,
 broker on localhost ([benchmark](https://github.com/anze3db/potatoq/blob/main/benchmarks/throughput.py)).
+
+² The SQLite that Python was built with: `python -c "import sqlite3; print(sqlite3.sqlite_version)"`.
+Pythons from uv and python.org bundle a recent one; see [SQLite](../brokers/sqlite.md#requirements).
+
+CI tests every broker on the oldest versions listed here and on the newest
+(PostgreSQL 18, Redis 8, RabbitMQ 4.3).
 
 ## Recommendations
 

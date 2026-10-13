@@ -8,7 +8,7 @@ app = Potatoq(
 )
 ```
 
-Requires `potatoq[rabbitmq]` and RabbitMQ 4.0 or newer (4.3 recommended).
+Requires `potatoq[rabbitmq]` and RabbitMQ 4.0 or newer (4.3 recommended; CI tests both).
 
 ## Why it's good
 

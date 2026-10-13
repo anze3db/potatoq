@@ -91,7 +91,8 @@ SQLite docs on WAL, busy handling and `data_version`.
   so an idle connection never holds a snapshot that would starve checkpoints.
 * **Claim**: `UPDATE … WHERE seq = (SELECT … ORDER BY priority DESC, seq LIMIT 1)
   RETURNING …`. It is atomic without `SKIP LOCKED` because SQLite has one writer. It needs
-  SQLite 3.35+, which every supported Python ships. A cheap read checks for work before the
+  SQLite 3.35+ (bundled with uv's and python.org's Pythons, not RHEL 9's system SQLite;
+  the broker refuses older ones at start-up). A cheap read checks for work before the
   write lock is taken.
 * **Wake-ups**: `PRAGMA data_version` (about 2 µs) changes whenever another connection
   commits. Idle workers check it with a backoff from 2 ms to 50 ms. That's millisecond
