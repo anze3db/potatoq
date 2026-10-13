@@ -64,9 +64,10 @@ $ potatoq -A proj worker
 
     ---
 
-    Acks happen after the task finishes. A crashed process's task is requeued, and
-    poison tasks are dead-lettered after 5 crashes. Failures land in a dead-letter
-    store you can replay.
+    Acks happen after the task finishes. If its process crashes (OOM, segfault), the
+    task is requeued, and dead-lettered after 5 crashes. A task that raises is
+    [retried only if you opt in](guide/retries-and-failures.md#retrying); either way,
+    failures end up in a dead-letter store you can replay.
 
 -   :lucide-zap:{ .lg .middle } **No head-of-line blocking**
 
@@ -115,6 +116,8 @@ $ potatoq -A proj worker
 | ETA / countdown | held in worker RAM | <span class="pq-good">stored by the broker</span> |
 | Long tasks on Redis | <span class="pq-bad">re-run every hour</span> | <span class="pq-good">leases renewed while running</span> |
 | Time limits | none | <span class="pq-good">30 min, soft 30 s earlier</span> |
+| Task raises an exception | failed, not retried (retries are opt-in) | failed, not retried (retries are opt-in) |
+| Retry delay | fixed 180 s | <span class="pq-good">exponential backoff with jitter</span> |
 | Failed tasks | discarded | <span class="pq-good">dead-letter store, replayable</span> |
 | `.delay()` inside `atomic()` | sent immediately | <span class="pq-good">sent on commit</span> |
 | Scheduler | separate `beat` process | <span class="pq-good">built into every worker, deduplicated</span> |
