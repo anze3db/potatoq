@@ -23,6 +23,12 @@ def test_signup():
 of `DrainedTask(id, name, args, kwargs, state, result, exception)`. Tasks with a
 countdown or a retry delay run without waiting: time is skipped ahead.
 
+Like a starting worker, `drain` (and `tick`, below) first imports your task modules:
+`tasks.py` of every Django app, and the modules in `imports` and `include`. A test
+doesn't have to import a task's module for the task to run. A task defined anywhere
+else (in a view, say) is dead-lettered as unregistered, as it would be on a worker,
+unless the test imported it: see [where tasks live](../integrations/django.md#where-tasks-live).
+
 It works the same on the SQLite, Postgres and Redis brokers, so a Django test can drain
 the database broker it really uses. RabbitMQ is the exception: its delays live inside the
 broker, so `drain` runs only what's ready and warns that countdowns and retries were

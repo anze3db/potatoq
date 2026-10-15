@@ -426,6 +426,37 @@ def test_drain_can_raise_the_first_failure(app):
         drain(app, raise_on_failure=True)
 
 
+def test_drain_and_tick_import_task_modules_like_a_worker(tmp_path, monkeypatch):
+    """A test that never imported the task's module still runs it, as a worker would."""
+    from potatoq.testing import tick
+
+    module = f"drained_tasks_{os.getpid()}_{time.monotonic_ns()}"
+    (tmp_path / f"{module}.py").write_text(
+        "from potatoq import shared_task\n\n\n@shared_task(name='drained.add')\ndef add(x, y):\n    return x + y\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    app = Potatoq("drain-imports", broker="memory://", set_as_current=True)
+    try:
+        app.conf.imports = [module]
+        app.send_task("drained.add", [1, 2])
+        [task] = drain(app)
+        assert (task.state, task.result) == ("SUCCESS", 3)
+
+        other = Potatoq("tick-imports", broker="memory://", set_as_current=True)
+        other.conf.imports = [f"{module}_beat"]
+        (tmp_path / f"{module}_beat.py").write_text(
+            "from potatoq import shared_task\n\n\n@shared_task(name='drained.beat', queue='beats')\n"
+            "def beat():\n    return 1\n"
+        )
+        other.conf.beat_schedule = {"every minute": {"task": "drained.beat", "schedule": 60}}
+        assert tick(other, at=datetime(2026, 1, 1, 3, 0, tzinfo=UTC)) == ["every minute"]
+        assert "drained.beat" in other.tasks  # imported, so the task's own options apply
+        assert other.broker.queue_sizes() == {"beats": 1}
+        other.close()
+    finally:
+        app.close()
+
+
 def test_drain_runs_scheduled_tasks_on_sqlite(tmp_path):
     app = Potatoq("core-sqlite", broker=f"sqlite:///{tmp_path}/drain.db", set_as_current=False)
     app.conf.result_backend = "broker"

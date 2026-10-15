@@ -53,7 +53,11 @@ def drain(
     ``include_scheduled`` also runs tasks with an ETA/countdown and retries (time is
     skipped ahead, they are not waited for), on every broker but RabbitMQ, whose delays
     live in the broker (it warns there).
+
+    Like a starting worker, it first imports the task modules (``tasks.py`` of every
+    Django app, ``imports``, ``include``), so tasks the test didn't import still run.
     """
+    app.loader_import_default_modules()
     broker = app.broker
     if queues is None:
         queues = sorted({*broker.queue_sizes(), app.conf.task_default_queue})
@@ -139,6 +143,7 @@ def tick(app: Potatoq, at: datetime | None = None) -> list[str]:
 
     from .worker.scheduler import Scheduler
 
+    app.loader_import_default_modules()  # as a starting worker does
     now = _aware(app, at or datetime.now(UTC)).astimezone(UTC)
     sent: list[str] = []
 
