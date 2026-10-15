@@ -63,7 +63,7 @@ the two never collide.
 | Crontab with both `day_of_month` and `day_of_week` | both must match | either matches (standard cron) | |
 | Naive `eta` datetimes | treated as UTC/local | rejected | Pass aware datetimes or use `countdown`. |
 | Root logger | hijacked | left alone | |
-| Tasks defined outside `tasks.py` (e.g. in views) | registered, because the worker's startup checks import the URLconf | only `tasks.py` is imported | Move them to `tasks.py`, or see [where tasks live](integrations/django.md#where-tasks-live). |
+| Tasks defined outside `tasks.py` (e.g. in views) | registered, because the worker's startup checks import the URLconf | only `tasks.py` is imported | Move them to `tasks.py`, or see [where tasks live](integrations/django.md#where-tasks-live). `manage.py check --deploy` [lists the ones workers can't run](integrations/django.md#catch-it-before-you-deploy). |
 
 ## 5. Not supported (yet)
 

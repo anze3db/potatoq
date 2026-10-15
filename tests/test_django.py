@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 
@@ -209,6 +211,40 @@ def test_worker_imports_the_urlconf_only_when_asked(django_env, monkeypatch, cap
 
     monkeypatch.setattr(settings, "ROOT_URLCONF", None)
     signals.worker_init.send(sender=worker)  # nothing to import
+
+
+def test_deploy_check_reports_tasks_workers_cant_run(django_env, monkeypatch):
+    from django.conf import settings
+    from django.core import checks
+
+    monkeypatch.setattr(settings, "ROOT_URLCONF", "djangoproj.shop.views", raising=False)  # as urls.py would
+    # Only the project's tasks (other tests register theirs on this app too); other tests
+    # also expect the views module, and its task, not to be imported yet.
+    project = {k: v for k, v in django_env._tasks.items() if k.startswith(("djangoproj.", "potatoq."))}
+    monkeypatch.setattr(django_env, "_tasks", type(django_env._tasks)(project))
+    try:
+        [error] = checks.run_checks(include_deployment_checks=True, tags=["potatoq"])
+        assert error.id == "potatoq.E001"
+        assert "'djangoproj.shop.views.refresh_preview'" in error.msg
+        assert "\"imports\": ['djangoproj.shop.views']" in error.hint
+
+        # Workers that import the module (here through the imports setting) can run it.
+        monkeypatch.setenv("TEST_DJANGO_IMPORTS", "djangoproj.shop.views")
+        assert checks.run_checks(include_deployment_checks=True, tags=["potatoq"]) == []
+    finally:
+        sys.modules.pop("djangoproj.shop.views", None)
+
+
+def test_deploy_check_warns_when_django_doesnt_start_like_a_worker(django_env, monkeypatch):
+    from django.conf import settings
+    from django.core import checks
+
+    monkeypatch.setattr(settings, "ROOT_URLCONF", "djangoproj.missing_urls", raising=False)  # Django reports it
+    monkeypatch.setenv("DJANGO_SETTINGS_MODULE", "djangoproj.missing_settings")
+    [warning] = checks.run_checks(include_deployment_checks=True, tags=["potatoq"])
+    assert warning.id == "potatoq.W001"
+    assert "djangoproj.missing_settings" in warning.msg
+    assert checks.run_checks(tags=["potatoq"]) == []  # a deploy check only
 
 
 def test_eager_task_inside_atomic_keeps_the_callers_connection(django_env):

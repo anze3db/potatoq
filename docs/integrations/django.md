@@ -103,6 +103,31 @@ web layer by default. Instead, either:
   (`CELERY_IMPORTS` works too), or
 - **Import the URLconf** like Celery: `POTATOQ = {"worker_import_urlconf": True}`.
 
+### Catch it before you deploy
+
+`check --deploy` (Django's deployment checklist) includes a potatoq check that starts
+Django in a new process the way a worker does, and reports every task the web process
+has that a worker couldn't run:
+
+```console
+$ python manage.py check --deploy
+ERRORS:
+?: (potatoq.E001) Task 'accounts.views.send_invite' is registered in this process, but
+workers don't import its module 'accounts.views': they would dead-letter it as unregistered.
+	HINT: Move the task to the app's tasks.py, or add its module to the 'imports' setting
+	(POTATOQ = {"imports": ['accounts.views']}), or set "worker_import_urlconf": True.
+```
+
+Run it in CI or before each deploy: it exits with an error, so a missing import fails
+the build instead of dead-lettering tasks in production. `--tag potatoq` runs only
+potatoq's checks. It's a deploy check because starting a second Django process takes a
+moment, too long for every `runserver` reload. If that process can't start (for example
+because it needs environment variables the check doesn't have), you get warning
+`potatoq.W001` with the error instead.
+
+The check uses the same settings as the web process. If your workers run with different
+settings or a different `-A` app, it can't see that.
+
 `potatoq -A proj inspect registered` shows what the running workers registered.
 
 ## Settings

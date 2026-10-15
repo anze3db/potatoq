@@ -8,6 +8,7 @@ class PotatoqConfig(AppConfig):
 
     def ready(self) -> None:
         from ...app import _get_default_app, current_app
+        from . import checks  # noqa: F401  (registers the system checks)
 
         app = current_app()
         if app is _get_default_app():

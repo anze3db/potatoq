@@ -14,6 +14,7 @@ DATABASES = {
 }
 CELERY_TASK_ACKS_LATE = True  # old Celery settings are read (and this one is the default anyway)
 POTATOQ = {"task_default_queue": "shop"}
+POTATOQ_IMPORTS = os.environ.get("TEST_DJANGO_IMPORTS", "").split()  # the system check's tests
 
 TASKS = {
     "default": {
