@@ -20,6 +20,7 @@ Run workers with ``potatoq worker`` (detects ``DJANGO_SETTINGS_MODULE``) or
 
 from __future__ import annotations
 
+import inspect
 import logging
 import os
 import weakref
@@ -269,6 +270,15 @@ def _close_old_connections(task: Any = None, **kwargs: Any) -> None:
     from django.db import close_old_connections
 
     close_old_connections()
+    func = getattr(type(task), "_django_func", None) or getattr(task, "run", None)  # django.tasks: the real one
+    if task is not None and inspect.iscoroutinefunction(func):
+        # The async ORM runs its queries through sync_to_async, on asgiref's executor
+        # thread: Django's connections are per thread, so clean up that thread's too.
+        from asgiref.sync import sync_to_async
+
+        from ...task import run_coroutine
+
+        run_coroutine(sync_to_async(close_old_connections)())
 
 
 def _close_all(**kwargs: Any) -> None:

@@ -260,6 +260,39 @@ def test_check_warns_about_django_celery_beat_schedules(django_env, monkeypatch)
     assert "don't run" in warning.msg
 
 
+def test_async_tasks_close_the_connections_the_async_orm_opened(django_env):
+    """The async ORM runs queries on asgiref's executor thread, not the task's thread:
+    its connection must be cleaned up around the task too (here CONN_MAX_AGE=0)."""
+    import django
+    from asgiref.sync import sync_to_async
+    from django.db import connection
+    from djangoproj.shop.tasks import count_orders, send_receipt
+
+    from potatoq.task import run_coroutine
+    from potatoq.worker import executor
+
+    def orm_thread_connected():
+        return run_coroutine(sync_to_async(lambda: connection.connection is not None)())
+
+    app = django_env
+    outcome = executor.execute(app, count_orders.build_message([], {}))
+    assert outcome.state == "SUCCESS"
+    assert orm_thread_connected() is False
+
+    if django.VERSION >= (6, 0):  # a django.tasks async task runs through a sync wrapper
+        from django.tasks import task_backends
+        from djangoproj.shop.jobs import async_double
+
+        ptask = task_backends["default"]._register(async_double)
+        connection_used = run_coroutine(sync_to_async(lambda: connection.ensure_connection())())
+        assert connection_used is None and orm_thread_connected() is True
+        assert executor.execute(app, ptask.build_message([2], {})).state == "SUCCESS"
+        assert orm_thread_connected() is False
+
+    assert executor.execute(app, send_receipt.build_message([1], {})).state == "SUCCESS"  # sync: as before
+    assert connection.connection is None
+
+
 def test_eager_task_inside_atomic_keeps_the_callers_connection(django_env):
     from django.db import connection, transaction
     from djangoproj.shop.tasks import send_receipt

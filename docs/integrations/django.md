@@ -14,7 +14,8 @@ That's the whole setup:
 - **Your database is the broker** (Postgres or SQLite) unless you configure another
   one. Tasks are written inside your transactions.
 - **`.delay()` in `atomic()` is sent on commit** ([details](../guide/transactions.md)).
-- **Worker processes close stale database connections** around every task, and never
+- **Worker processes close stale database connections** around every task (for
+  `async def` tasks, also the ones the async ORM opens on its own thread), and never
   reuse connections inherited from the parent process.
 - `TIME_ZONE` is used for crontab schedules. If your settings don't set it, Django's
   default is `America/Chicago`, not UTC; `potatoq schedule` shows each next run with
@@ -185,7 +186,8 @@ enqueues inside `atomic()` in `self.captureOnCommitCallbacks(execute=True)`
 When the broker is your database, it follows Django's test runner to the test database
 (`test_<name>`), so tests never enqueue into the database a development worker is
 reading. With SQLite's in-memory test database there is no file to share, so tasks stay
-in the test process (`memory://`) until you `drain` them. A test without database access
+in the test process (`memory://`) until you `drain` them. The same goes for an in-memory
+database in your settings (`NAME: ":memory:"`, or `DATABASE_URL=sqlite://`). A test without database access
 (no `django_db` mark) can't enqueue at all: pytest-django stops it, as it would any query
 ([details](../guide/testing.md#django-and-pytest-django)).
 
