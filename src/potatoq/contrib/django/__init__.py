@@ -88,6 +88,26 @@ def database_url(alias: str | None = None) -> str | None:
     return None
 
 
+def database_broker_url(alias: str | None = None) -> str | None:
+    """The broker to use when none is configured: the Django database itself, or, for
+    an in-memory SQLite database, which no other process can open, ``memory://``
+    (tasks stay in this process; run them with ``potatoq.testing.drain``)."""
+    from django.db import connections
+
+    alias = alias or database_alias()
+    url = database_url(alias)
+    if url is None and _in_memory_sqlite(connections.databases[alias]):
+        return "memory://"
+    return url
+
+
+def _in_memory_sqlite(settings_dict: dict[str, Any]) -> bool:
+    name = str(settings_dict.get("NAME") or "")
+    return settings_dict["ENGINE"].endswith("sqlite3") and (
+        name == ":memory:" or (name.startswith("file:") and "mode=memory" in name)
+    )
+
+
 def configure_app(app: Potatoq) -> None:
     """Load settings (``POTATOQ`` dict, ``POTATOQ_*``, ``CELERY_*``) and install hooks."""
     settings = _settings()
@@ -104,7 +124,7 @@ def configure_app(app: Potatoq) -> None:
     if "timezone" not in conf.changed() and getattr(settings, "TIME_ZONE", None):
         conf.timezone = settings.TIME_ZONE
     if not conf.broker_url and not os.environ.get("POTATOQ_BROKER_URL") and not os.environ.get("CELERY_BROKER_URL"):
-        url = database_url()
+        url = database_broker_url()
         if url:
             conf.broker_url = url
             app._broker_follows = DatabaseFollower(database_alias(), app)

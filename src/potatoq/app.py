@@ -400,9 +400,9 @@ class Potatoq:
         if not os.environ.get("DJANGO_SETTINGS_MODULE"):
             return None
         try:
-            from .contrib.django import database_url
+            from .contrib.django import database_broker_url
 
-            return database_url()
+            return database_broker_url()
         except Exception:
             logger.debug("Could not derive broker from Django DATABASES", exc_info=True)
             return None

@@ -76,6 +76,31 @@ def test_database_url_unusable_databases(django_env, monkeypatch, caplog):
     assert "django.db.backends.mysql can't be used as a Potatoq broker" in caplog.text
 
 
+def test_in_memory_sqlite_uses_the_memory_broker_not_a_file(django_env, monkeypatch, tmp_path):
+    """DATABASE_URL=sqlite:// must not fall back to ./potatoq.sqlite3, which would carry
+    tasks and scheduled-run records over from one test run to the next."""
+    from django.db import connections
+
+    from potatoq import Potatoq
+    from potatoq.contrib import django as dj
+
+    sqlite = "django.db.backends.sqlite3"
+    for name in (":memory:", "file:memdb?mode=memory&cache=shared"):
+        monkeypatch.setitem(connections.databases, "default", {"ENGINE": sqlite, "NAME": name})
+        assert dj.database_broker_url() == "memory://"
+        app = Potatoq("in-memory", set_as_current=False)
+        dj.configure_app(app)
+        assert app.conf.broker_url == "memory://"
+        assert app._broker_url() == "memory://"
+    monkeypatch.setitem(connections.databases, "default", {"ENGINE": sqlite, "NAME": str(tmp_path / "db.sqlite3")})
+    assert dj.database_broker_url() == f"sqlite:///{tmp_path}/db.sqlite3"
+    monkeypatch.setitem(connections.databases, "default", {"ENGINE": "django.db.backends.mysql", "NAME": "shop"})
+    assert dj.database_broker_url() is None
+    app = Potatoq("no-django-app", set_as_current=False)  # potatoq.contrib.django not configured
+    monkeypatch.setitem(connections.databases, "default", {"ENGINE": sqlite, "NAME": ":memory:"})
+    assert app._broker_url() == "memory://"
+
+
 def test_canonical_urls_compare_loosely(tmp_path):
     from potatoq.contrib.django import _canonical
 
