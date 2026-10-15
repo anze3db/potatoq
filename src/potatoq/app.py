@@ -449,9 +449,14 @@ class Potatoq:
         if url in ("rpc://", "rpc", "disabled", "none"):
             return None
         if url in ("django-db", "django-cache"):
-            url = self._django_database_url()
+            # django-celery-results' backends: potatoq's own tables in Django's database.
+            url_setting, url = url, self._django_database_url()
             if not url:
-                raise ImproperlyConfigured("result_backend='django-db' requires Django")
+                raise ImproperlyConfigured(
+                    f"result_backend={url_setting!r} stores results in potatoq's tables in your Django database, "
+                    "which requires Django with a PostgreSQL or SQLite database. Set result_backend to a "
+                    "redis://, postgresql:// or sqlite:// URL instead."
+                )
         if url == self._broker_url():
             return self.broker
         backend = broker_for_url(url)(url, self, **self.conf.get("result_backend_transport_options", {}))

@@ -14,7 +14,18 @@ reads another queue's messages and can run next to it during the switch:
 
 1. Deploy potatoq workers next to your old workers.
 2. Deploy the producers (web/app code) using potatoq. New tasks go to potatoq's queues.
+   Stop the old scheduler (`celery beat`, APScheduler, cron) in the same deploy:
+   potatoq's workers run the schedule.
 3. When the old queues are empty, stop the old workers and remove the old library.
+   "Empty" includes delayed tasks: Celery workers hold eta/countdown tasks
+   unacknowledged until they're due, and Dramatiq keeps them in separate `<queue>.DQ`
+   queues.
+
+If a deploy replaces the code and restarts everything at once (a single host, say), the
+old workers can't keep running: deploy, then move what's left in the old queues into
+potatoq's. The Celery guide has
+[the commands to check the queues and scripts to move leftover tasks](migrating-from-celery.md#4-deploy-new-queues-then-drain-the-old-ones),
+for Redis and RabbitMQ.
 
 On RabbitMQ, potatoq needs quorum queues and refuses a queue name that an existing
 classic queue already uses. Pick new queue names rather than reusing the old ones.

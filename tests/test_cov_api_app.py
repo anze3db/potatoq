@@ -427,7 +427,7 @@ def test_django_db_result_backend(django_env):
 
 def test_django_db_result_backend_requires_django(no_env_broker):
     app = Potatoq("djdb", broker="memory://", backend="django-db", set_as_current=False)
-    with pytest.raises(ImproperlyConfigured, match="requires Django"):
+    with pytest.raises(ImproperlyConfigured, match="requires Django with a PostgreSQL or SQLite database"):
         _ = app.backend
 
 

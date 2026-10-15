@@ -1,10 +1,11 @@
-"""Django system checks (``python manage.py check --deploy``).
+"""Django system checks.
 
 Tasks defined outside ``tasks.py`` (in ``views.py``, say) are registered in the web
 process, which imports the views, but a worker only imports ``tasks.py`` modules and
 ``imports``: it dead-letters those tasks as unregistered, at runtime. The deploy check
 boots Django in a fresh process the way a worker does and reports every task the web
-process has that a worker couldn't run.
+process has that a worker couldn't run. Another check warns when the settings still
+point Celery beat at django-celery-beat's database schedules, which potatoq doesn't read.
 """
 
 from __future__ import annotations
@@ -61,6 +62,23 @@ def check_workers_can_run_tasks(app_configs: Any = None, **kwargs: Any) -> list[
             )
         )
     return errors
+
+
+@checks.register("potatoq")
+def check_beat_scheduler(app_configs: Any = None, **kwargs: Any) -> list[checks.CheckMessage]:
+    """django-celery-beat's schedules live in its tables, which potatoq doesn't read."""
+    scheduler = current_app().conf.get("beat_scheduler")
+    if "django_celery_beat" not in str(scheduler or ""):
+        return []
+    return [
+        checks.Warning(
+            f"beat_scheduler is {scheduler!r}: potatoq ignores it, so the periodic tasks stored in "
+            "django-celery-beat's tables don't run.",
+            hint="Move them to the beat_schedule setting and remove beat_scheduler; see "
+            "https://anze3db.github.io/potatoq/migrating-from-celery/#django-celery-beat",
+            id="potatoq.W002",
+        )
+    ]
 
 
 def _unresolvable_in_worker(names: list[str]) -> list[str]:

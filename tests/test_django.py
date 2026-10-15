@@ -247,6 +247,16 @@ def test_deploy_check_warns_when_django_doesnt_start_like_a_worker(django_env, m
     assert checks.run_checks(tags=["potatoq"]) == []  # a deploy check only
 
 
+def test_check_warns_about_django_celery_beat_schedules(django_env, monkeypatch):
+    from django.core import checks
+
+    assert checks.run_checks(tags=["potatoq"]) == []
+    monkeypatch.setitem(django_env.conf, "beat_scheduler", "django_celery_beat.schedulers:DatabaseScheduler")
+    [warning] = checks.run_checks(tags=["potatoq"])
+    assert warning.id == "potatoq.W002"
+    assert "don't run" in warning.msg
+
+
 def test_eager_task_inside_atomic_keeps_the_callers_connection(django_env):
     from django.db import connection, transaction
     from djangoproj.shop.tasks import send_receipt
