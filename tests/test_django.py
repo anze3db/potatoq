@@ -293,6 +293,21 @@ def test_async_tasks_close_the_connections_the_async_orm_opened(django_env):
     assert connection.connection is None
 
 
+def test_autodiscovery_skips_potatoqs_own_app(django_env, monkeypatch):
+    """Its tasks module is the django.tasks backend, which needs Django 6: importing it
+    stopped workers (and drain) from starting on Django 5.2."""
+    import importlib
+
+    from potatoq import app as app_module
+
+    imported = []
+    real = importlib.import_module
+    monkeypatch.setattr(app_module.importlib, "import_module", lambda name: imported.append(name) or real(name))
+    django_env._do_autodiscover(None, "tasks")
+    assert "djangoproj.shop.tasks" in imported
+    assert "potatoq.contrib.django.tasks" not in imported
+
+
 def test_eager_task_inside_atomic_keeps_the_callers_connection(django_env):
     from django.db import connection, transaction
     from djangoproj.shop.tasks import send_receipt

@@ -374,6 +374,9 @@ class Potatoq:
             except Exception:
                 packages = []
         for package in packages:
+            if package == "potatoq.contrib.django":
+                # Its tasks module is the django.tasks backend, not tasks (and needs Django 6).
+                continue
             module = f"{package}.{related_name}"
             try:
                 importlib.import_module(module)
