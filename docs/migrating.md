@@ -6,6 +6,8 @@ Step-by-step guides:
   settings and Django integration are the same; the defaults are safer.
 - **[From Dramatiq](migrating-from-dramatiq.md)**: actors become tasks, milliseconds
   become seconds, and retries become opt-in.
+- **[From schedule](migrating-from-schedule.md)** (or APScheduler): jobs become tasks,
+  and the schedule moves to the `beat_schedule` setting, run by the workers.
 
 ## Switching over
 
