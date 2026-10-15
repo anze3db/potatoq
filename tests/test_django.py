@@ -228,8 +228,11 @@ def test_deploy_check_reports_tasks_workers_cant_run(django_env, monkeypatch):
         assert "'djangoproj.shop.views.refresh_preview'" in error.msg
         assert "\"imports\": ['djangoproj.shop.views']" in error.hint
 
-        # Workers that import the module (here through the imports setting) can run it.
+        # Workers that import the module (through imports, or the URLconf) can run it.
         monkeypatch.setenv("TEST_DJANGO_IMPORTS", "djangoproj.shop.views")
+        assert checks.run_checks(include_deployment_checks=True, tags=["potatoq"]) == []
+        monkeypatch.delenv("TEST_DJANGO_IMPORTS")
+        monkeypatch.setenv("TEST_DJANGO_URLCONF", "djangoproj.shop.views")
         assert checks.run_checks(include_deployment_checks=True, tags=["potatoq"]) == []
     finally:
         sys.modules.pop("djangoproj.shop.views", None)
