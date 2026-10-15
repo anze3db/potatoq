@@ -11,6 +11,10 @@ next release. Everything else is generated from pull request titles by
 
 ## Unreleased
 
+## [26.1a5](https://github.com/anze3db/potatoq/releases/tag/26.1a5) - 2026-10-16
+
+### Highlights
+
 - **Tracing, APM and error tracking**: integrations for OpenTelemetry (also Logfire and
   Datadog), Sentry (errors, tracing, opt-in Crons) and New Relic, with trace context carried
   from `.delay()` into the task, and a `potatoq.instrumentation` API for your own.
@@ -18,6 +22,30 @@ next release. Everything else is generated from pull request titles by
   transaction runs the task when it commits, as a worker would see it.
 - **Django deploy check** (`manage.py check --deploy`) for tasks workers can't import,
   and a warning when `CELERY_BEAT_SCHEDULER` still points at django-celery-beat.
+
+### Changes
+
+* Tests: connect the consumer before timing a broker-held ETA
+* Eager mode: run .delay() inside a transaction when it commits, like a worker
+* Django: deploy check for tasks that workers can't import
+* Celery guide: django-celery-results/beat, concrete cutover steps and scripts to move leftover tasks
+* Test the deploy check with workers that import the URLconf
+* Add OpenTelemetry, Sentry and New Relic integrations with distributed tracing
+* Django: use the memory broker for an in-memory SQLite database, not ./potatoq.sqlite3
+* Django: close the async ORM's connections around async def tasks
+* drain() and tick() import task modules like a starting worker
+* Add a guide for migrating from schedule (and APScheduler)
+* Sentry docs: Crons is opt-in; show how to monitor only some entries
+
+<!-- Release notes generated using configuration in .github/release.yml at main -->
+
+
+
+**Full Changelog**: https://github.com/anze3db/potatoq/compare/26.1a4...26.1a5
+
+### Contributors
+
+Thank you to everyone who contributed to this release: @anze3db
 
 ## [26.1a4](https://github.com/anze3db/potatoq/releases/tag/26.1a4) - 2026-10-13
 
