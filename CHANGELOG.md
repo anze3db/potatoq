@@ -12,7 +12,7 @@ next release. Everything else is generated from pull request titles by
 ## Unreleased
 
 - **Tracing, APM and error tracking**: integrations for OpenTelemetry (also Logfire and
-  Datadog), Sentry (errors, tracing, Crons) and New Relic, with trace context carried
+  Datadog), Sentry (errors, tracing, opt-in Crons) and New Relic, with trace context carried
   from `.delay()` into the task, and a `potatoq.instrumentation` API for your own.
 - **Eager mode respects transactions**: with `task_always_eager`, `.delay()` inside a
   transaction runs the task when it commits, as a worker would see it.

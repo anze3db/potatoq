@@ -153,7 +153,7 @@ from potatoq.contrib.sentry import PotatoqIntegration
 sentry_sdk.init(
     dsn="https://…",
     traces_sample_rate=0.1,
-    integrations=[PotatoqIntegration(monitor_periodic_tasks=True)],
+    integrations=[PotatoqIntegration()],
 )
 ```
 
@@ -163,9 +163,12 @@ sentry_sdk.init(
 - **Tracing**: each attempt is a transaction (`queue.task.potatoq`) in the trace of the
   request that sent it, with a `queue.process` span; the sender gets a `queue.publish`
   span. Sentry's **Queues** page shows each queue's latency and error rate from these.
-- **Crons**: with `monitor_periodic_tasks=True`, every `beat_schedule` run sends
-  check-ins, and the monitors are created from your schedules (crontabs, and intervals
-  of a minute or more), so a run that's missed, fails or hangs alerts you.
+- **Crons** (off by default): with `monitor_periodic_tasks=True`, every
+  `beat_schedule` run sends check-ins, and the monitors are created from your schedules
+  (crontabs, and intervals of a minute or more), so a run that's missed, fails or hangs
+  alerts you. Sentry bills per monitor, so turn it on only for the entries you need to
+  watch: `exclude_periodic_tasks` takes regexes of entry names to leave out, for
+  example `[r"^(?!nightly-)"]` to monitor only entries whose names start with `nightly-`.
 
 | Option | Default | |
 |---|---|---|
