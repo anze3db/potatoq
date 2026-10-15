@@ -182,7 +182,8 @@ The usual Celery signals are available from `potatoq.signals`: `task_prerun`,
 `task_rejected`, `task_unknown`, `before_task_publish`, `after_task_publish`,
 `worker_init`, `worker_ready`, `worker_process_init`, `worker_process_shutdown`,
 `worker_shutting_down`, `worker_shutdown`, `beat_init`, `setup_logging` and
-`after_setup_logger`.
+`after_setup_logger`. For tracing and APM, use the
+[integrations](observability.md) instead.
 
 ```python
 from potatoq.signals import worker_process_init

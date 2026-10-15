@@ -11,7 +11,7 @@ import copy
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, Self, cast
 
-from . import states
+from . import instrumentation, states
 from .message import Message, new_id
 
 if TYPE_CHECKING:
@@ -718,13 +718,15 @@ def _message(app: Potatoq, sig: Signature, parent: Message | None, check: bool) 
     task = app.tasks.get(sig.task)
     if task is None:
         # Sent by name: the task's code (and its defaults) live elsewhere.
-        return Message(
+        message = Message(
             task=sig.task, args=list(args), kwargs=kwargs, id=task_id or new_id(),
             queue=options.get("queue") or app.conf.task_default_queue,
             parent_id=options.get("parent_id"), root_id=options.get("root_id"),
             group_id=options.get("group_id"), group_index=options.get("group_index"), chord=options.get("chord"),
             link=signatures_to_list(options.get("link")), link_error=signatures_to_list(options.get("link_error")),
         )  # fmt: skip
+        instrumentation.message_created(message)
+        return message
     if check and task.typing:
         task._check_arguments(list(args), kwargs)
     return task.build_message(list(args), kwargs, task_id, **options)

@@ -34,6 +34,9 @@ redis = ["redis>=5.0"]
 postgres = ["psycopg[binary]>=3.2"]
 rabbitmq = ["pika>=1.3"]
 all = ["redis>=5.0", "psycopg[binary]>=3.2", "pika>=1.3"]
+opentelemetry = ["opentelemetry-api>=1.27", "opentelemetry-instrumentation>=0.48b0"]
+sentry = ["sentry-sdk>=2.0"]
+newrelic = ["newrelic>=10.0"]
 
 [project.urls]
 Homepage = "https://github.com/anze3db/potatoq"
@@ -43,6 +46,10 @@ Issues = "https://github.com/anze3db/potatoq/issues"
 
 [project.scripts]
 potatoq = "potatoq.cli:main"
+
+# Picked up by opentelemetry-instrument (auto-instrumentation).
+[project.entry-points.opentelemetry_instrumentor]
+potatoq = "potatoq.contrib.opentelemetry:PotatoqInstrumentor"
 
 [dependency-groups]
 dev = [
@@ -60,6 +67,10 @@ dev = [
     "coverage[toml]>=7.10",
     "mypy>=2.4.0",
     "pytest-xdist>=3.8.0",
+    "opentelemetry-sdk>=1.27",
+    "opentelemetry-instrumentation>=0.48b0",
+    "sentry-sdk>=2.0",
+    "newrelic>=10.0",
 ]
 docs = [
     "mkdocstrings-python>=2",
@@ -122,5 +133,5 @@ check_untyped_defs = true
 
 [[tool.mypy.overrides]]
 # No type information published by these libraries.
-module = ["django.*", "pika.*", "flask_sqlalchemy.*"]
+module = ["django.*", "pika.*", "flask_sqlalchemy.*", "newrelic.*"]
 ignore_missing_imports = true

@@ -16,7 +16,7 @@ import traceback as tb
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from .. import serialization, signals, states
+from .. import instrumentation, serialization, signals, states
 from ..app import set_current_task
 from ..brokers.base import ResultRecord
 from ..canvas import Signature
@@ -283,8 +283,22 @@ def execute(
     is_eager: bool = False,
 ) -> Outcome:
     """Run ``message`` and return what should happen next. Never raises."""
-    start = time.monotonic()
     task: Task | None = app.resolve_task(message.task)
+    if not instrumentation.registered():
+        return _execute(app, message, task, delivery_count, hostname, is_eager)
+    run = instrumentation.TaskRun(
+        app, message, task, delivery_count=delivery_count, is_eager=is_eager, hostname=hostname
+    )
+    with instrumentation.task_run(run):
+        outcome = _execute(app, message, task, delivery_count, hostname, is_eager)
+        run.finish(outcome)
+    return outcome
+
+
+def _execute(
+    app: Potatoq, message: Message, task: Task | None, delivery_count: int, hostname: str | None, is_eager: bool
+) -> Outcome:
+    start = time.monotonic()
     limits = task.resolved_time_limits(message.options) if task is not None else (None, None)
     request = build_request(message, delivery_count, hostname, is_eager, limits)
 
@@ -445,6 +459,7 @@ def _on_retry(app: Potatoq, task: Task, message: Message, request: Context, exc:
     max_retries = getattr(exc, "max_retries", None)
     if max_retries is not None:
         new.options["max_retries"] = max_retries
+    instrumentation.message_created(new)  # the next attempt follows on from this one
     cause = exc.exc or exc
     einfo = ExceptionInfo(cause)
     try:
@@ -487,6 +502,18 @@ def _on_failure(
 def failure_outcome(app: Potatoq, message: Message, exc: BaseException, hostname: str | None = None) -> Outcome:
     """Outcome for a task whose process died (hard time limit, OOM, segfault)."""
     task = app.tasks.get(message.task)
+    if not instrumentation.registered():
+        return _failure_outcome(app, message, task, exc, hostname)
+    run = instrumentation.TaskRun(app, message, task, hostname=hostname, process_died=True)
+    with instrumentation.task_run(run):
+        outcome = _failure_outcome(app, message, task, exc, hostname)
+        run.finish(outcome)
+    return outcome
+
+
+def _failure_outcome(
+    app: Potatoq, message: Message, task: Task | None, exc: BaseException, hostname: str | None
+) -> Outcome:
     request = build_request(message, 1, hostname, False, (None, None))
     store = app.backend is not None and not message.ignore_result
     traceback = f"{type(exc).__name__}: {exc}"

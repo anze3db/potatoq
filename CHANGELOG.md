@@ -11,6 +11,14 @@ next release. Everything else is generated from pull request titles by
 
 ## Unreleased
 
+- **Tracing, APM and error tracking**: integrations for OpenTelemetry (also Logfire and
+  Datadog), Sentry (errors, tracing, Crons) and New Relic, with trace context carried
+  from `.delay()` into the task, and a `potatoq.instrumentation` API for your own.
+- **Eager mode respects transactions**: with `task_always_eager`, `.delay()` inside a
+  transaction runs the task when it commits, as a worker would see it.
+- **Django deploy check** (`manage.py check --deploy`) for tasks workers can't import,
+  and a warning when `CELERY_BEAT_SCHEDULER` still points at django-celery-beat.
+
 ## [26.1a4](https://github.com/anze3db/potatoq/releases/tag/26.1a4) - 2026-10-13
 
 ### Changes

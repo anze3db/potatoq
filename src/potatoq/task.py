@@ -11,7 +11,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from . import serialization, states
+from . import instrumentation, serialization, states
 from .exceptions import MaxRetriesExceededError, OperationalError, Retry
 from .message import Message, new_id
 
@@ -379,6 +379,7 @@ class Task:
             message.root_id = message.id
         serialization.check_serializable(message.args)
         serialization.check_serializable(message.kwargs)
+        instrumentation.message_created(message)
         return message
 
     def _check_arguments(self, args: list[Any], kwargs: dict[str, Any]) -> None:

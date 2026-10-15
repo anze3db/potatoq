@@ -124,17 +124,10 @@ What people get from Flower and friends today.
   failures, retries, dead letters and worker counts.
 - [ ] **Health endpoint** for Kubernetes liveness and readiness probes (`--health-port`),
   plus a stack-dump signal for stuck workers.
-- [ ] **OpenTelemetry**: carry trace context from `delay()` into the task, with spans
-  for enqueue and execution.
 - [ ] **Producer libraries for other languages**, or a stable way to enqueue on Redis
   from outside Python ([message format](reference/message-format.md)).
-- [ ] **APM integrations** (New Relic, Datadog): their agents instrument Celery tasks as
-  background transactions, but not potatoq's. Until then, wrap tasks with
-  `task_prerun`/`task_postrun` signals.
 - [ ] **`sd_notify` readiness** for systemd `Type=notify` units, so rolling restarts can
   wait for the new worker instead of sleeping.
-- [ ] **Sentry**: Sentry's SDK instruments Celery automatically, but not potatoq. Build
-  an integration on top of potatoq's signals.
 - [ ] **Structured logging**: an optional JSON log format for the worker.
 
 ## Ecosystem
