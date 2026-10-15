@@ -272,7 +272,7 @@ class Task:
         if self.typing:
             self._check_arguments(args, kwargs)
         if self.app.conf.task_always_eager or options.pop("always_eager", False):
-            return self.apply(args, kwargs, task_id=task_id, link=link, link_error=link_error, **options)
+            return self._apply_eagerly(args, kwargs, task_id, link, link_error, options)
         connection = options.pop("connection", None)
         using = options.pop("using", None)
         on_commit = options.pop("enqueue_on_commit", None)
@@ -281,6 +281,29 @@ class Task:
         message = self.build_message(args, kwargs, task_id, link=link, link_error=link_error, **options)
         self.app.publish([message], connection=connection, on_commit=on_commit, using=using)
         return self.AsyncResult(message.id, ignored=message.ignore_result)
+
+    def _apply_eagerly(
+        self, args: list[Any], kwargs: dict[str, Any], task_id: str | None, link: Any, link_error: Any, options: Any
+    ) -> EagerResult:
+        """Eager ``apply_async``: inside a transaction the task runs when it commits (and
+        never if it rolls back), as a worker would see it; otherwise it runs now."""
+        from .result import EagerResult
+
+        options.pop("connection", None)
+        using = options.pop("using", None)
+        on_commit = options.pop("enqueue_on_commit", None)
+        if on_commit is None:
+            on_commit = self._opt("enqueue_on_commit", "task_enqueue_on_commit")
+        if not on_commit:
+            return self.apply(args, kwargs, task_id=task_id, link=link, link_error=link_error, **options)
+        result = EagerResult(task_id or new_id(), None, states.PENDING, app=self.app, name=self.name)
+
+        def run() -> None:
+            done = self.apply(args, kwargs, task_id=result.id, link=link, link_error=link_error, **options)
+            result._value, result._state, result._traceback = done._value, done._state, done._traceback
+
+        self.app.on_commit(run, using=using)
+        return result
 
     def build_message(
         self,
@@ -378,11 +401,6 @@ class Task:
         self.apply_async_on_commit(args, kwargs)
 
     def apply_async_on_commit(self, args: Any = None, kwargs: dict[str, Any] | None = None, **options: Any) -> None:
-        if self.app.conf.task_always_eager:
-            # Like Celery: the task runs when the transaction commits, even in eager
-            # mode (never, in a Django TestCase; use captureOnCommitCallbacks).
-            self.app.on_commit(lambda: self.apply_async(args, kwargs, **options), using=options.get("using"))
-            return
         options["enqueue_on_commit"] = True
         self.apply_async(args, kwargs, **options)
 

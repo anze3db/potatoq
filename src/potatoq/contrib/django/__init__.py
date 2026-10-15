@@ -349,10 +349,13 @@ class DjangoTransactionHook:
         return True
 
     def on_commit(self, fn: Any, using: Any) -> bool:
+        """Defer ``fn`` (an eager task) to the commit. The transactions a ``TestCase``
+        wraps each test in don't count: they stand in for autocommit, so eager tasks
+        outside the code's own ``atomic()`` blocks still run at once in tests."""
         from django.db import transaction
 
         conn = self._connection(using)
-        if not conn.in_atomic_block:
+        if not any(not getattr(block, "_from_testcase", False) for block in conn.atomic_blocks):
             return False
         transaction.on_commit(fn, using=conn.alias)
         return True

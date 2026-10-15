@@ -46,6 +46,7 @@ the two never collide.
 | Delivery | at-most-once by default | at-least-once | Make tasks idempotent. With `acks_late` you already had to. |
 | Serializer | JSON, or pickle if you enabled it | JSON only | If you used pickle to pass model instances or other objects, pass primary keys and load inside the task. `.delay()` tells you which argument it can't send. |
 | `.delay()` inside a DB transaction | sent immediately | sent on commit, dropped on rollback | Nothing; this fixes `DoesNotExist` races. Opt out per task with `enqueue_on_commit=False` or globally with `task_enqueue_on_commit = False`. |
+| `.delay()` inside a DB transaction with `task_always_eager` | runs immediately, inside the transaction | runs on commit, never on rollback, like a worker | In a `TestCase`, wrap code that enqueues inside `atomic()` in `captureOnCommitCallbacks(execute=True)` ([details](guide/testing.md#eager-mode-and-transactions)). |
 | Time limit | none | 30 min hard, soft 30 s earlier | Raise it for long tasks: `@app.task(time_limit=4 * 3600)`. |
 | Automatic retries | none unless `autoretry_for` or `self.retry()` | the same | Nothing. |
 | Retries before giving up | 3 | 10 | Set `max_retries=3` on a task (or `task_max_retries = 3`) to keep the old limit. |

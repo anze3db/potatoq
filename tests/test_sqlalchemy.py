@@ -44,6 +44,31 @@ def test_deferred_until_commit_with_other_broker():
     assert size(app) == 2
 
 
+def test_eager_delay_waits_for_the_commit_like_a_worker():
+    app = Potatoq("sqla-eager", broker="memory://", task_always_eager=True)
+    install(app)
+    ran = []
+
+    @app.task
+    def notify(x):
+        ran.append(x)
+
+    engine = create_engine("sqlite://")
+    with Session(engine) as session:
+        session.execute(text("CREATE TABLE t (x int)"))
+        session.commit()
+        with session.begin():
+            session.execute(text("INSERT INTO t VALUES (1)"))
+            notify.delay(1)
+            assert ran == []
+        assert ran == [1]
+        with pytest.raises(RuntimeError), session.begin():
+            session.execute(text("INSERT INTO t VALUES (2)"))
+            notify.delay(2)
+            raise RuntimeError
+    assert ran == [1]
+
+
 def test_read_only_transaction_does_not_swallow_tasks():
     """Autobegin after a SELECT, then the session is closed without commit."""
     app = Potatoq("sqla-ro", broker="memory://")

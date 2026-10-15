@@ -147,9 +147,15 @@ crontabs: `TIME_ZONE` isn't read.
 
 ## Tests
 
-`TestCase` never commits, so tasks enqueued inside it are never sent. Either set
-`POTATOQ = {"task_always_eager": True}` in test settings, or use `TransactionTestCase`
-together with [`drain`](../guide/testing.md).
+`TestCase` never commits, so tasks enqueued inside it are never sent to the broker. Either
+set `POTATOQ = {"task_always_eager": True}` in test settings, or use
+`TransactionTestCase` together with [`drain`](../guide/testing.md).
+
+Eager mode respects transactions like a worker does: `.delay()` inside `atomic()` (or a
+view with `ATOMIC_REQUESTS`) runs the task when the transaction commits. The transaction
+`TestCase` wraps around each test doesn't count, but your own do, so wrap code that
+enqueues inside `atomic()` in `self.captureOnCommitCallbacks(execute=True)`
+([details](../guide/testing.md#eager-mode-and-transactions)).
 
 When the broker is your database, it follows Django's test runner to the test database
 (`test_<name>`), so tests never enqueue into the database a development worker is

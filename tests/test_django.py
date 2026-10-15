@@ -219,10 +219,61 @@ def test_eager_task_inside_atomic_keeps_the_callers_connection(django_env):
     app.conf.task_always_eager = True
     try:
         with transaction.atomic():
-            assert send_receipt.delay(1).get()["order"] == 1
+            result = send_receipt.apply_async((1,), enqueue_on_commit=False)
+            assert result.get()["order"] == 1
             with connection.cursor() as cur:  # still open: the task ran in our transaction
                 cur.execute("SELECT 1")
     finally:
+        app.conf.task_always_eager = False
+
+
+def test_eager_delay_inside_atomic_waits_for_the_commit_like_a_worker(django_env):
+    from django.db import connection, transaction
+    from djangoproj.shop.tasks import send_receipt
+
+    app = django_env
+    app.conf.task_always_eager = True
+    try:
+        with transaction.atomic():
+            with connection.cursor() as cur:
+                cur.execute("INSERT INTO shop_order (id, total) VALUES (7, 70)")
+            result = send_receipt.delay(7)
+            assert result.state == "PENDING"
+            with pytest.raises(RuntimeError, match="runs when the current transaction commits"):
+                result.get()
+        assert result.state == "SUCCESS"
+        assert result.get() == {"order": 7, "total": 70}
+
+        with transaction.atomic():
+            rolled_back = send_receipt.delay(8)
+            transaction.set_rollback(True)
+        assert rolled_back.state == "PENDING"  # never ran, as in production
+
+        assert send_receipt.delay(7).get() == {"order": 7, "total": 70}  # no transaction: at once
+    finally:
+        app.conf.task_always_eager = False
+        with connection.cursor() as cur:
+            cur.execute("DELETE FROM shop_order WHERE id = 7")
+
+
+def test_eager_delay_in_a_testcase_ignores_the_tests_own_transaction(django_env):
+    """``TestCase`` wraps each test in transactions that never commit; they stand in for
+    autocommit, so eager tasks called outside the code's own ``atomic()`` run at once."""
+    from django.db import transaction
+    from djangoproj.shop.tasks import send_receipt
+
+    app = django_env
+    app.conf.task_always_eager = True
+    testcase_atomic = transaction.atomic()
+    testcase_atomic._from_testcase = True
+    testcase_atomic.__enter__()
+    try:
+        assert send_receipt.delay(9).state == "SUCCESS"
+        with transaction.atomic():
+            assert send_receipt.delay(9).state == "PENDING"  # captureOnCommitCallbacks runs it
+    finally:
+        transaction.set_rollback(True)
+        testcase_atomic.__exit__(None, None, None)
         app.conf.task_always_eager = False
 
 

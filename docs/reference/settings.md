@@ -46,7 +46,7 @@ automatically. The [design notes](../design/defaults.md) explain each default.
 | `task_dead_letter_failures` | `True` | Keep failed tasks in the dead-letter store |
 | `dead_letter_max` | `10000` | |
 | `dead_letter_ttl` | `2592000` | 30 days |
-| `task_always_eager` | `False` | Run tasks in-process at `.delay()` (tests) |
+| `task_always_eager` | `False` | Run tasks in-process at `.delay()` (tests); inside a transaction, when it commits |
 | `task_eager_propagates` | `True` | |
 | `task_store_eager_result` | `False` | |
 

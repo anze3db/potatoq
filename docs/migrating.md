@@ -36,6 +36,9 @@ These defaults catch people coming from every library:
   argument it can't send.
 - **Enqueued on commit.** `.delay()` inside a database transaction sends the task when
   the transaction commits and drops it on rollback. Remove your `on_commit` wrappers.
+  Eager mode (`task_always_eager`) follows the same rule, so development with eager
+  mode on runs the task after COMMIT, as production does
+  ([details](guide/testing.md#eager-mode-and-transactions)).
 - **A 30-minute time limit** on every task. Raise it for long tasks:
   `@shared_task(time_limit=4 * 3600)`.
 - **Failed tasks are kept** in a dead-letter store: `potatoq dead list`, then

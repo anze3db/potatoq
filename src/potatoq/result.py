@@ -277,6 +277,11 @@ class EagerResult(AsyncResult):
         disable_sync_subtasks: bool = True,
         **kwargs: Any,
     ) -> Any:
+        if self._state == states.PENDING:
+            raise RuntimeError(
+                f"{self.task_name}[{self.id}] runs when the current transaction commits (eager mode "
+                "waits for the commit like a worker does): call get() after the transaction."
+            )
         if propagate and self._state in states.PROPAGATE_STATES and isinstance(self._value, BaseException):
             raise self._value
         return self._value

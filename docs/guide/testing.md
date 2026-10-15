@@ -68,14 +68,42 @@ uses its own.)
 app.conf.task_always_eager = True    # .delay() runs the task immediately, in-process
 ```
 
-This behaves as in Celery, with one improvement: arguments still round-trip through the
-serializer, so an eager test fails where production would.
+This behaves as in Celery, with two improvements: arguments still round-trip through the
+serializer, so an eager test fails where production would, and transactions are
+respected the way a worker sees them (below).
 `task_eager_propagates` (default `True`) re-raises task exceptions.
+
+### Eager mode and transactions
+
+Inside a transaction (Django `atomic()` or `ATOMIC_REQUESTS`, or an SQLAlchemy session
+that has written something), an eager `.delay()` runs the task **when the transaction
+commits**, and not at all if it rolls back, just like a worker would only see the task
+after COMMIT. Celery's eager mode runs it immediately instead, inside the transaction,
+which hides exactly the bugs enqueue-on-commit prevents: a task that works in
+development because it can see uncommitted rows, then fails in production with
+`DoesNotExist`.
+
+```python
+with transaction.atomic():
+    order = Order.objects.create(...)
+    result = send_receipt.delay(order.id)   # not run yet: result.state == "PENDING"
+# committed: send_receipt has run, result.get() returns its value
+```
+
+Calling `result.get()` before the commit raises `RuntimeError`. Tasks with
+`enqueue_on_commit=False` (or calls with `apply_async(..., enqueue_on_commit=False)`)
+run immediately, inside the transaction, as they're sent immediately in production.
+
+In a Django `TestCase`, the transaction that wraps each test doesn't count: it stands in
+for autocommit, so eager tasks called outside your code's own `atomic()` blocks still
+run at once. Tasks sent inside an `atomic()` (including views with `ATOMIC_REQUESTS`)
+wait for a commit that never comes in a `TestCase`, like any `on_commit` callback: wrap
+the code in `self.captureOnCommitCallbacks(execute=True)`, or use `TransactionTestCase`.
 
 As in Celery:
 
 - With `task_eager_propagates` (or `task.apply(throw=True)`), a task that retries
   raises `Retry` at its first retry, so a test can assert that it retried. Without it,
   the retries run right away, one after another, until the task succeeds or gives up.
-- `delay_on_commit()` waits for the transaction to commit even in eager mode. In a
-  Django `TestCase`, wrap the code in `self.captureOnCommitCallbacks(execute=True)`.
+- `delay_on_commit()` waits for the transaction to commit even in eager mode (in
+  potatoq, so does `.delay()`, as described above).

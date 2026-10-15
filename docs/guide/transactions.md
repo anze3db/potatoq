@@ -85,11 +85,12 @@ If losing a task this way isn't acceptable, use the Postgres (or SQLite) broker 
 same database: the task row is part of your transaction, so it commits or rolls back with
 your data.
 
-!!! note "Django tests"
-    `TestCase` wraps each test in a transaction that never commits, so deferred tasks
-    are never sent. Use `TransactionTestCase`, Django's
-    `captureOnCommitCallbacks(execute=True)`, or `task_always_eager = True`, which runs
-    `.delay()` immediately (`delay_on_commit()` still waits for the commit, as in
-    Celery).
+!!! note "Eager mode and Django tests"
+    With `task_always_eager = True`, `.delay()` inside a transaction runs the task when
+    it commits, not immediately, so development with eager mode on behaves like
+    production ([details](testing.md#eager-mode-and-transactions)). `TestCase` wraps
+    each test in a transaction that never commits; potatoq doesn't count that one, so
+    eager tasks outside your own `atomic()` blocks run at once. For tasks sent inside
+    them, use Django's `captureOnCommitCallbacks(execute=True)` or `TransactionTestCase`.
 
 See [Django](../integrations/django.md) and [SQLAlchemy](../integrations/sqlalchemy.md) for setup.
