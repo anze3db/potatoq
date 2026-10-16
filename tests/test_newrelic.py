@@ -36,6 +36,44 @@ def test_tasks_are_background_transactions_in_the_senders_trace(tmp_path):
     assert out["retry_errors"] == 0  # only the last attempt is an error
     assert out["failed_errors"] == ["builtins:ConnectionError"]
     assert out["failed_state"] == "FAILURE"
-    assert out["process_died"] == ["MemoryError"]
-    assert out["lifecycle"] == ["activate", "activate", "shutdown"]
+    assert out["process_died"] == []  # reported by the supervisor: kept away from New Relic
+    assert out["lifecycle"] == ["activate", "shutdown"]  # worker processes only
     assert out["after_uninstrument"] == [[], False]
+
+
+def test_worker_processes_report_to_new_relic(tmp_path):
+    """The agent must be activated in each worker process, never before the fork: New
+    Relic can't report from a process forked after it was registered."""
+    import signal
+
+    from potatoq import Potatoq
+
+    agent_log = tmp_path / "newrelic.log"
+    config = tmp_path / "newrelic.ini"
+    config.write_text(
+        f"[newrelic]\napp_name = potatoq-test\ndeveloper_mode = true\nlog_file = {agent_log}\nlog_level = info\n"
+    )
+    broker = f"sqlite:///{tmp_path}/broker.db"
+    env = {**os.environ, "PYTHONPATH": str(TESTS), "TEST_BROKER": broker, "TEST_NEWRELIC_INI": str(config)}
+    env.pop("DJANGO_SETTINGS_MODULE", None)
+    producer = Potatoq("nrworkerapp", broker=broker, set_as_current=False)
+    add = producer.task(name="nrworkerapp.add")(lambda x, y: x + y)
+    hang = producer.task(name="nrworkerapp.hang")(lambda: None)
+    # Killed by its time limit, which the main process reports; then one task per new process.
+    hung = hang.apply_async(queue="default")
+    results = [add.delay(i, i) for i in range(3)]
+    with open(tmp_path / "worker.log", "w") as log:
+        worker = subprocess.Popen(
+            [sys.executable, "-m", "potatoq.cli", "-A", "nrworkerapp", "worker", "-c", "1"],
+            env=env, cwd=TESTS, stdout=log, stderr=subprocess.STDOUT,
+        )  # fmt: skip
+        try:
+            assert [r.get(timeout=30) for r in results] == [0, 2, 4]
+            assert hung.state == "FAILURE"
+        finally:
+            worker.send_signal(signal.SIGTERM)
+            assert worker.wait(timeout=30) == 0, (tmp_path / "worker.log").read_text()
+            producer.close()
+    text = agent_log.read_text()
+    assert "process different to where the agent was already registered" not in text
+    assert "No data will be reported" not in text

@@ -202,6 +202,13 @@ a request is part of the request's transaction instead. Transactions carry
 `potatoq.state` and `potatoq.wait_time`, for queries and alerts. The agent connects in
 each worker process when it starts and sends its data before the process exits.
 
+The agent is never activated in the worker's main process: New Relic reports nothing
+from processes forked after activation ("No data will be reported for this process").
+Don't call `newrelic.agent.register_application()` in code the worker loads either, for
+the same reason. As a consequence, a task whose process died (hard time limit, out of
+memory) isn't reported to New Relic, because the main process is the one that notices.
+It's still dead-lettered, logged, and reported to Sentry and OpenTelemetry.
+
 ## Datadog
 
 Datadog's tracer accepts OpenTelemetry's API, so use the

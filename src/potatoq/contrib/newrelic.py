@@ -17,7 +17,10 @@ retried aren't. The transaction carries ``potatoq.*`` attributes: task id, queue
 retries, deliveries, final state and the time it waited in the queue.
 
 The agent is activated in each worker process when it starts, and shut down (which
-sends what it has collected) before the process exits.
+sends what it has collected) before the process exits; never in the worker's main
+process, because New Relic drops everything from processes forked after activation.
+For the same reason, tasks whose process died (hard time limit, out of memory) aren't
+reported to New Relic: the main process is the one that notices.
 """
 
 from __future__ import annotations
@@ -49,6 +52,12 @@ class _NewRelic(Instrumentation):
 
     @contextmanager
     def task_run(self, run: TaskRun) -> Iterator[None]:
+        if run.process_died:
+            # Reported by the supervisor: a transaction there would register the agent in
+            # the process the workers fork from, and New Relic drops all data from
+            # processes forked after that.
+            yield
+            return
         if newrelic.agent.current_transaction() is not None:
             # Eager, inside a web request or another task: part of that transaction.
             with newrelic.agent.FunctionTrace(run.name, group=GROUP):
@@ -65,7 +74,7 @@ class _NewRelic(Instrumentation):
                 ("potatoq.retries", run.retries),
                 ("potatoq.delivery_count", run.delivery_count),
             ]
-            if not run.is_eager and not run.process_died:
+            if not run.is_eager:
                 attributes.append(("potatoq.wait_time", run.wait_time))
             if run.periodic:
                 attributes.append(("potatoq.periodic", run.periodic))
@@ -74,8 +83,6 @@ class _NewRelic(Instrumentation):
                 yield
             finally:
                 newrelic.agent.add_custom_attribute("potatoq.state", run.state or "interrupted")
-                if run.process_died:
-                    newrelic.agent.add_custom_attribute("potatoq.process_died", True)
                 _notice_failure(run)
 
 
@@ -86,7 +93,8 @@ def _notice_failure(run: TaskRun) -> None:
 
 
 def _activate(**kwargs: Any) -> None:
-    """Start connecting the agent in a new worker process, without waiting for it."""
+    """Start connecting the agent in a new worker process, without waiting for it. Only
+    there: New Relic can't report from processes forked after it was activated."""
     newrelic.agent.application().activate()
 
 
@@ -101,13 +109,11 @@ _instrumentation = _NewRelic()
 def instrument() -> None:
     """Trace potatoq tasks in this process (and the worker processes it starts)."""
     instrumentation.register(_instrumentation)
-    signals.worker_init.connect(_activate, dispatch_uid="potatoq.newrelic.activate")
     signals.worker_process_init.connect(_activate, dispatch_uid="potatoq.newrelic.activate.process")
     signals.worker_process_shutdown.connect(_shutdown, dispatch_uid="potatoq.newrelic.shutdown")
 
 
 def uninstrument() -> None:
     instrumentation.unregister(_instrumentation)
-    signals.worker_init.disconnect(_activate, dispatch_uid="potatoq.newrelic.activate")
     signals.worker_process_init.disconnect(_activate, dispatch_uid="potatoq.newrelic.activate.process")
     signals.worker_process_shutdown.disconnect(_shutdown, dispatch_uid="potatoq.newrelic.shutdown")
