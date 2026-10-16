@@ -11,6 +11,25 @@ next release. Everything else is generated from pull request titles by
 
 ## Unreleased
 
+## [26.1a6](https://github.com/anze3db/potatoq/releases/tag/26.1a6) - 2026-10-16
+
+### Changes
+
+* New Relic: activate the agent only in worker processes, so forked ones report
+* Celery guide: point celery multi users to the systemd example
+* Add potatoq.testing.reset() for brokers that outlive a test run
+* Tests: cover New Relic's periodic-task attribute
+
+<!-- Release notes generated using configuration in .github/release.yml at main -->
+
+
+
+**Full Changelog**: https://github.com/anze3db/potatoq/compare/26.1a5...26.1a6
+
+### Contributors
+
+Thank you to everyone who contributed to this release: @anze3db
+
 ## [26.1a5](https://github.com/anze3db/potatoq/releases/tag/26.1a5) - 2026-10-16
 
 ### Highlights
