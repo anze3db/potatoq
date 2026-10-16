@@ -317,6 +317,9 @@ class PostgresBroker(Broker):
 
         return self._run(_enqueue)
 
+    def forget_periodic_runs(self) -> None:
+        self._run(lambda conn: conn.execute(self._sql("DELETE FROM {periodic}")))
+
     def last_periodic_runs(self) -> dict[str, float]:
         rows = self._run(
             lambda conn: conn.execute(self._sql("SELECT name, max(fire_at) FROM {periodic} GROUP BY name")).fetchall()

@@ -228,6 +228,10 @@ class SQLiteBroker(Broker):
             self._insert(conn, [message])
             return True
 
+    def forget_periodic_runs(self) -> None:
+        with self._write() as conn:
+            conn.execute("DELETE FROM potatoq_periodic")
+
     def last_periodic_runs(self) -> dict[str, float]:
         rows = self.conn.execute("SELECT name, max(fire_at) FROM potatoq_periodic GROUP BY name").fetchall()
         return {name: float(fire_at) for name, fire_at in rows}

@@ -319,3 +319,35 @@ def test_drain_skips_ahead_to_countdowns_and_retries(broker_app):
         ("t.flaky", "SUCCESS", "done"),
         ("t.later", "SUCCESS", 42),
     ]
+
+
+def test_reset_clears_leftovers_from_an_earlier_test_run(broker_app):
+    """A reused test database (pytest-django's --reuse-db) or a shared Redis keeps queued
+    tasks and the record of sent periodic runs: tick() at a fixed time sent nothing the
+    second time."""
+    from datetime import UTC, datetime
+
+    from potatoq.schedules import crontab
+    from potatoq.testing import drain, reset, tick
+
+    app = broker_app
+
+    @app.task(name="t.report")
+    def report():
+        return "ok"
+
+    if app.kind == "rabbitmq":  # its periodic record is the scheduler leader's memory
+        app.broker._fired[("nightly", 1.0)] = None
+        app.broker.forget_periodic_runs()
+        assert app.broker._fired == {}
+        return
+    app.conf.beat_schedule = {"nightly": {"task": "t.report", "schedule": crontab(minute=0, hour=3)}}
+    at = datetime(2026, 1, 1, 3, 0, tzinfo=UTC)
+    assert tick(app, at=at) == ["nightly"]
+    report.apply_async(countdown=3600)  # left behind, as if nobody drained it
+    assert tick(app, at=at) == []  # already sent: the leftover state of the last run
+
+    assert reset(app) == 2  # the periodic run and the delayed task
+    assert drain(app) == []
+    assert tick(app, at=at) == ["nightly"]
+    assert [t.name for t in drain(app)] == ["t.report"]

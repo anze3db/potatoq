@@ -194,6 +194,10 @@ class Broker:
         scheduler. This is what makes it safe to run the scheduler on every worker."""
         raise NotImplementedError
 
+    def forget_periodic_runs(self) -> None:
+        """Forget which periodic runs were sent, so they can be sent again (tests)."""
+        raise NotImplementedError
+
     def last_periodic_runs(self) -> dict[str, float]:
         """The latest fire time each periodic entry was sent for (epoch seconds), as far
         as the broker remembers (claims are kept for a week, a day on Redis)."""

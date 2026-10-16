@@ -413,6 +413,10 @@ class RedisBroker(Broker):
         # A claim only needs to outlive the scheduler's catch-up window (plus clock skew).
         return bool(self.run("periodic", name, repr(fire_at), 86400 * 1000, *self._message_args([message])))
 
+    def forget_periodic_runs(self) -> None:
+        keys = [f"{self.prefix}:periodic-last", *self.client.scan_iter(match=f"{self.prefix}:periodic:*")]
+        self.client.delete(*keys)
+
     def last_periodic_runs(self) -> dict[str, float]:
         return {_s(k): float(v) for k, v in self.client.hgetall(f"{self.prefix}:periodic-last").items()}
 

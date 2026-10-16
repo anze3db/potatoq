@@ -68,6 +68,32 @@ not allowed", instead of queueing it into your development database where a runn
 worker would pick it up. (In async code, where Django refuses its connection, potatoq
 uses its own.)
 
+## Brokers that outlive a test run
+
+The broker's state lasts as long as the broker does. That's no problem with `memory://`
+or a fresh test database, but it is with a Postgres test database kept between runs
+(pytest-django's `--reuse-db`, Django's `--keepdb`) or a shared Redis. There, tasks a
+test left queued are still waiting in the next run, and so is the record of which
+periodic runs were sent: `tick(app, at=...)` at a fixed time sends its tasks the first
+time and nothing in every run after that, as a worker wouldn't send a run twice.
+
+Start such tests from a clean broker with `reset`:
+
+```python title="conftest.py"
+import pytest
+from potatoq import current_app
+from potatoq.testing import reset
+
+
+@pytest.fixture(autouse=True)
+def clean_queues(db):          # pytest-django: after the test database is set up
+    reset(current_app())
+```
+
+`reset(app, queues=None)` deletes the waiting and scheduled tasks in `queues` (default:
+every queue with tasks, plus the default queue), forgets which periodic runs were sent,
+and returns how many tasks it deleted. Results and dead letters are kept.
+
 ## Eager mode
 
 ```python

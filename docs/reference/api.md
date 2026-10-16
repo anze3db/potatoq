@@ -75,6 +75,8 @@
 
 ::: potatoq.testing.drain
 
+::: potatoq.testing.reset
+
 ::: potatoq.testing.DrainedTask
 
 ## Exceptions

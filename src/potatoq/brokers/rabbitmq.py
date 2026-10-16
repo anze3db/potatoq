@@ -325,6 +325,9 @@ class RabbitMQBroker(Broker):
         self.enqueue([message])
         return True
 
+    def forget_periodic_runs(self) -> None:
+        self._fired.clear()  # the leader's record lives in memory
+
     # --- results / coordination via the result backend -------------------------------
 
     def _backend(self) -> Broker | None:

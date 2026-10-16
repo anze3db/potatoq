@@ -68,6 +68,10 @@ class MemoryBroker(Broker):
         self.enqueue([message])
         return True
 
+    def forget_periodic_runs(self) -> None:
+        with self.lock:
+            self.periodic.clear()
+
     def last_periodic_runs(self) -> dict[str, float]:
         out: dict[str, float] = {}
         for name, fire_at in self.periodic:

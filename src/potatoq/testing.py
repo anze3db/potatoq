@@ -26,7 +26,7 @@ from .worker import executor
 if TYPE_CHECKING:
     from .app import Potatoq
 
-__all__ = ["DrainedTask", "drain", "due", "tick"]
+__all__ = ["DrainedTask", "drain", "due", "reset", "tick"]
 
 
 @dataclass
@@ -80,6 +80,23 @@ def drain(
         if raise_on_failure and outcome.state == "FAILURE" and outcome.exc is not None:
             raise outcome.exc
     return done
+
+
+def reset(app: Potatoq, queues: list[str] | None = None) -> int:
+    """Start a test from a clean broker: delete the waiting and scheduled tasks (in
+    ``queues``, default: every queue with tasks, plus the default queue) and forget which
+    periodic runs were sent, so ``tick()`` at a fixed time sends them again.
+
+    For brokers that outlive a test run, such as a Postgres test database kept with
+    ``--reuse-db`` or a shared Redis. Results and dead letters are left alone. Returns
+    the number of tasks deleted.
+    """
+    broker = app.broker
+    if queues is None:
+        queues = sorted({*broker.queue_sizes(), app.conf.task_default_queue})
+    deleted = sum(broker.purge(queue) for queue in queues)
+    broker.forget_periodic_runs()
+    return deleted
 
 
 def _next_scheduled(app: Potatoq, consumer: Any, queues: list[str]) -> Any:
