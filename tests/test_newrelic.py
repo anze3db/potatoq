@@ -36,6 +36,7 @@ def test_tasks_are_background_transactions_in_the_senders_trace(tmp_path):
     assert out["retry_errors"] == 0  # only the last attempt is an error
     assert out["failed_errors"] == ["builtins:ConnectionError"]
     assert out["failed_state"] == "FAILURE"
+    assert out["periodic"] == "nightly"
     assert out["process_died"] == []  # reported by the supervisor: kept away from New Relic
     assert out["lifecycle"] == ["activate", "shutdown"]  # worker processes only
     assert out["after_uninstrument"] == [[], False]

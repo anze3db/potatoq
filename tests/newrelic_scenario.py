@@ -51,6 +51,9 @@ out["retry_errors"] = len(retried._errors)
 out["failed_errors"] = [e.type for e in failed._errors]
 out["failed_state"] = failed._custom_params["potatoq.state"]
 
+executor.execute(app, charge.build_message([False], {}, headers={"periodic": "nightly"}))
+out["periodic"] = seen["transactions"][-1]._custom_params.get("potatoq.periodic")
+
 noticed = []
 real_notice = newrelic.agent.notice_error
 newrelic.agent.notice_error = lambda error=None, **kw: noticed.append(error[0].__name__)
