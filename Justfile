@@ -101,7 +101,7 @@ bench:
 bench-cpu pythons="3.14,3.14t":
     BENCH_PYTHONS="{{ pythons }}" uv run python benchmarks/cpu.py
 
-# Preview the next release; `just release --no-dry-run` commits it (`--push`: push and wait for it)
+# Preview the next release; `just release --no-dry-run` commits and pushes it, then waits for it
 [group("release")]
 release *args:
     #!/usr/bin/env bash
@@ -117,8 +117,8 @@ release *args:
     else
         uv run scripts/release.py prepare --pre --dry-run ${rest[@]+"${rest[@]}"}
         echo
-        echo "That was a dry run. To commit the release: just release --no-dry-run"
-        echo "Add --push to push it too and wait until CI passes and it's published."
+        echo "That was a dry run. To release it: just release --no-dry-run"
+        echo "(commits it, pushes it to main and waits until CI passes and it's published)"
     fi
 
 # Remove build, docs, coverage and cache output
