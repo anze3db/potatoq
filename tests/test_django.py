@@ -223,7 +223,10 @@ def test_deploy_check_reports_tasks_workers_cant_run(django_env, monkeypatch):
     project = {k: v for k, v in django_env._tasks.items() if k.startswith(("djangoproj.", "potatoq."))}
     monkeypatch.setattr(django_env, "_tasks", type(django_env._tasks)(project))
     try:
-        [error] = checks.run_checks(include_deployment_checks=True, tags=["potatoq"])
+        found = checks.run_checks(include_deployment_checks=True, tags=["potatoq"])
+        # Name every task reported: another test leaking one onto this app made it flaky on CI.
+        assert len(found) == 1, [(e.id, e.msg) for e in found]
+        [error] = found
         assert error.id == "potatoq.E001"
         assert "'djangoproj.shop.views.refresh_preview'" in error.msg
         assert "\"imports\": ['djangoproj.shop.views']" in error.hint
