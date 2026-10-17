@@ -21,3 +21,6 @@ site/
 .coverage.*
 htmlcov/
 coverage.xml
+
+# Snapshot of a local redis-server started from this directory
+dump.rdb
