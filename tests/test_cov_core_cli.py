@@ -232,6 +232,17 @@ def fake_supervisor(monkeypatch):
     return captured
 
 
+def test_worker_time_limit_zero_turns_the_limits_off(app, fake_supervisor):
+    assert run(app, "worker", "--time-limit", "0", "--soft-time-limit", "0") == 0
+    assert (app.conf.task_time_limit, app.conf.task_soft_time_limit) == (0, 0)
+
+    @app.task(name="cli.anything")
+    def anything():
+        pass
+
+    assert anything.resolved_time_limits() == (None, None)
+
+
 def test_worker_options_reach_the_supervisor_and_config(app, fake_supervisor, tmp_path):
     pidfile = tmp_path / "worker.pid"
     argv = ["worker", "-c", "3", "-Q", "a,b", "-n", "w1@%h", "-l", "debug", "--max-tasks-per-child", "50"]

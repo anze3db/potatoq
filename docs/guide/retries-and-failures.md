@@ -126,7 +126,7 @@ every task, to get the exact delays.
 |---|---|---|---|
 | `autoretry_for` | `task_autoretry_for` | `()` | Exceptions that retry automatically |
 | `dont_autoretry_for` | | `()` | Exceptions that never do |
-| `max_retries` | `task_max_retries` | `10` | Retries after the first run; `None` (app setting): no limit |
+| `max_retries` | `task_max_retries` | `10` | Retries after the first run; `None`: no limit |
 | `retry_backoff` | `task_retry_backoff` | `10` | First delay in seconds, doubled each retry; `False`: fixed delay |
 | `retry_backoff_max` | `task_retry_backoff_max` | `600` | Longest delay |
 | `retry_jitter` | `task_retry_jitter` | `True` | Randomize each delay between half and all of it |
@@ -150,8 +150,9 @@ The soft limit raises `SoftTimeLimitExceeded` inside the task, by default 30 sec
 before the hard limit. If the task is still running at the hard limit, the worker kills
 the process, records a `TimeLimitExceeded` failure, and replaces the process.
 
-`time_limit=None` (or `0`) turns the limit off for one task; leaving `time_limit` out
-uses `task_time_limit`. Per call, `apply_async(time_limit=0)` turns it off.
+`time_limit=None` (or `0`) turns the limit off for one task, and `soft_time_limit=None`
+(or `0`) keeps only the hard limit. Leaving them out uses `task_time_limit` and
+`task_soft_time_limit`. Per call, `apply_async(time_limit=0)` turns the limit off.
 
 ## When a worker process dies
 

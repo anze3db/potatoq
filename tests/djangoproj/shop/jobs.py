@@ -54,6 +54,6 @@ def never_retried():
     raise ConnectionError("down")
 
 
-@potatoq_task(queue_name="shop", time_limit=None)
+@potatoq_task(queue_name="shop", time_limit=None, soft_time_limit=None, max_retries=None)
 def unlimited():
     return "ok"

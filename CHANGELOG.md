@@ -11,11 +11,14 @@ next release. Everything else is generated from pull request titles by
 
 ## Unreleased
 
-- **`time_limit=None` now means "no time limit"** on a task (`@app.task(time_limit=None)`,
-  and Django's `@task(time_limit=None)`). It used to fall back to `task_time_limit`, so
-  the task was still killed after 30 minutes. Leave `time_limit` out to use the
-  app-wide limit. `time_limit=0` also turns it off. On RabbitMQ, a task without a limit
-  raises the consumer timeout to a day.
+- **`None` now means "no limit" for `time_limit`, `soft_time_limit` and `max_retries`**
+  on a task (`@app.task(...)` and Django's `@task(...)`), as in Celery. They used to fall
+  back to the app-wide settings, so `time_limit=None` still killed the task after 30
+  minutes and `max_retries=None` stopped after 10 retries. Leave an option out to use
+  the app-wide setting. `0` also turns the time limits off. On RabbitMQ, a task without
+  a time limit raises the consumer timeout to a day.
+- **`potatoq worker --time-limit 0`** (and `--soft-time-limit 0`) turn the limits off;
+  `0` used to be ignored.
 
 ## [26.1a6](https://github.com/anze3db/potatoq/releases/tag/26.1a6) - 2026-10-16
 

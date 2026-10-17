@@ -93,6 +93,12 @@ def test_resolved_max_retries(memory_app):
     assert from_app.resolved_max_retries() == 9
     assert explicit.resolved_max_retries() == 2
 
+    @memory_app.task(max_retries=None, retry_kwargs={"max_retries": 7})
+    def forever():
+        pass
+
+    assert forever.resolved_max_retries() is None  # None: no limit, as in Celery
+
 
 def test_resolved_time_limits(memory_app):
     @memory_app.task(time_limit=timedelta(seconds=10), soft_time_limit=timedelta(seconds=20))
@@ -129,6 +135,21 @@ def test_time_limit_none_or_zero_means_no_limit(memory_app, limit):
     assert defaults.build_message([], {}, time_limit=0).options == {"time_limit": 0}
     assert defaults.resolved_time_limits({"time_limit": 0}) == (None, None)
     assert defaults.build_message([], {}, time_limit=None).options == {}
+
+
+@pytest.mark.parametrize("soft", [None, 0])
+def test_soft_time_limit_none_or_zero_means_no_soft_limit(memory_app, soft):
+    @memory_app.task(time_limit=600, soft_time_limit=soft)
+    def hard_only():
+        pass
+
+    @memory_app.task(time_limit=600)
+    def derived():
+        pass
+
+    assert hard_only.resolved_time_limits() == (600, None)
+    assert derived.resolved_time_limits() == (600, 570)  # unset: 30 s before the hard limit
+    assert derived.resolved_time_limits({"soft_time_limit": 0}) == (600, None)
 
 
 # --- publishing ---------------------------------------------------------------------

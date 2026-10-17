@@ -28,8 +28,8 @@ class _Unset(Enum):
     UNSET = "UNSET"
 
 
-#: ``time_limit`` that a task leaves unset: ``task_time_limit`` applies. ``None`` is
-#: different: it means "no limit".
+#: A ``time_limit``, ``soft_time_limit`` or ``max_retries`` that a task leaves unset: the
+#: app-wide setting applies. ``None`` is different: it means "no limit".
 UNSET = _Unset.UNSET
 
 
@@ -145,7 +145,7 @@ class Task:
 
     # Options (None means "use the app-level default").
     typing: bool = True
-    max_retries: int | None = None
+    max_retries: int | _Unset | None = UNSET  # None: retry forever
     default_retry_delay: float | None = None
     autoretry_for: tuple[type[BaseException], ...] | None = None  # None: task_autoretry_for
     dont_autoretry_for: tuple[type[BaseException], ...] = ()
@@ -160,7 +160,7 @@ class Task:
     store_errors_even_if_ignored: bool = False
     track_started: bool | None = None
     time_limit: float | timedelta | _Unset | None = UNSET  # None or 0: no limit
-    soft_time_limit: float | None = None
+    soft_time_limit: float | timedelta | _Unset | None = UNSET  # None or 0: no soft limit
     rate_limit: str | None = None
     queue: str | None = None
     priority: int | None = None
@@ -233,7 +233,7 @@ class Task:
         return tuple(self.app.conf.task_autoretry_for or ())
 
     def resolved_max_retries(self) -> int | None:
-        if self.max_retries is not None:
+        if self.max_retries is not UNSET:
             return self.max_retries
         if "max_retries" in self.retry_kwargs:
             return self.retry_kwargs["max_retries"]
@@ -250,13 +250,14 @@ class Task:
         hard = options.get("time_limit", self.time_limit)
         if hard is UNSET:
             hard = self.app.conf.task_time_limit
+        hard = _to_seconds(hard) or None
         soft = options.get("soft_time_limit", self.soft_time_limit)
-        if soft is None:
+        if soft is UNSET:
             soft = self.app.conf.task_soft_time_limit
-        hard, soft = _to_seconds(hard) or None, _to_seconds(soft)
-        if soft is None and hard:
-            # Give tasks a chance to clean up before the process is killed.
-            soft = max(hard - min(hard * 0.1, 30.0), hard * 0.5)
+            if soft is None and hard:
+                # Give tasks a chance to clean up before the process is killed.
+                soft = max(hard - min(hard * 0.1, 30.0), hard * 0.5)
+        soft = _to_seconds(soft) or None
         if soft and hard and soft >= hard:
             soft = None
         return hard, soft

@@ -40,8 +40,8 @@ Every option can be set per task in the decorator, and most also per call in
 | `queue` | `task_default_queue` (`"default"`) | Queue to send to |
 | `priority` | `0` | Higher runs first, on every broker |
 | `time_limit` | 1800 s | Hard limit: the process is killed. `None` or `0`: no limit |
-| `soft_time_limit` | 30 s (or 10%) before `time_limit` | Raises `SoftTimeLimitExceeded` inside the task |
-| `max_retries` | `10` | For `self.retry()` and `autoretry_for` |
+| `soft_time_limit` | 30 s (or 10%) before `time_limit` | Raises `SoftTimeLimitExceeded` inside the task. `None` or `0`: no soft limit |
+| `max_retries` | `10` | For `self.retry()` and `autoretry_for`. `None`: no limit |
 | `autoretry_for` | `()` | Exception types that trigger an automatic retry |
 | `dont_autoretry_for` | `()` | Exceptions excluded from `autoretry_for` |
 | `retry_backoff` | `10` | Exponential backoff base in seconds (`False` = fixed delay) |

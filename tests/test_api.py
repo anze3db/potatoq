@@ -138,6 +138,23 @@ def test_retry_without_exc_raises_max_retries(memory_app):
         result.get()
 
 
+def test_max_retries_none_retries_past_the_app_limit(memory_app):
+    memory_app.conf.task_max_retries = 1
+    attempts = []
+
+    @memory_app.task(autoretry_for=(ConnectionError,), retry_backoff=False, default_retry_delay=0, max_retries=None)
+    def fetch():
+        attempts.append(len(attempts))
+        if len(attempts) < 4:
+            raise ConnectionError("down")
+        return "fetched"
+
+    result = fetch.delay()
+    drain(memory_app)
+    assert result.get() == "fetched"
+    assert attempts == [0, 1, 2, 3]
+
+
 def test_autoretry_for_with_backoff(memory_app):
     attempts = []
 

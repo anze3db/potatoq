@@ -258,9 +258,10 @@ def cmd_worker(app: Potatoq, args: argparse.Namespace) -> int:
         args.hostname = expand_hostname(args.hostname)
     from .worker.supervisor import Supervisor
 
-    if args.time_limit:
+    # 0 turns a limit off.
+    if args.time_limit is not None:
         app.conf.task_time_limit = args.time_limit
-    if args.soft_time_limit:
+    if args.soft_time_limit is not None:
         app.conf.task_soft_time_limit = args.soft_time_limit
     if args.pidfile:
         with open(args.pidfile, "w") as f:

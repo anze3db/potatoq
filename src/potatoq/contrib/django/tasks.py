@@ -91,13 +91,17 @@ _OPTIONS = (
 )
 
 
+#: Options where None means "no limit". For the others it means "the default".
+_NONE_IS_NO_LIMIT = frozenset({"time_limit", "soft_time_limit", "max_retries"})
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class PotatoqTask(Task):
     """``django.tasks.Task`` plus potatoq's per-task options."""
 
     time_limit: float | _Unset | None = UNSET  # None: no limit
-    soft_time_limit: float | None = None
-    max_retries: int | None = None
+    soft_time_limit: float | _Unset | None = UNSET  # None: no soft limit
+    max_retries: int | _Unset | None = UNSET  # None: retry forever
     autoretry_for: tuple[type[BaseException], ...] | None = None
     dont_autoretry_for: tuple[type[BaseException], ...] = ()
     retry_backoff: Any = None
@@ -210,11 +214,10 @@ class PotatoqBackend(BaseTaskBackend):
         # Read from the class: through the instance the function would be a bound method.
         if existing is not None and getattr(type(existing), "_django_func", None) is task.func:
             return existing
-        # None means "the default" for every option but time_limit, where it means no limit.
         options = {
             opt: value
             for opt in _OPTIONS
-            if (value := getattr(task, opt, UNSET)) is not UNSET and (value is not None or opt == "time_limit")
+            if (value := getattr(task, opt, UNSET)) is not UNSET and (value is not None or opt in _NONE_IS_NO_LIMIT)
         }
         backend_cls = type(self)
 
