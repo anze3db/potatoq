@@ -11,6 +11,10 @@ next release. Everything else is generated from pull request titles by
 
 ## Unreleased
 
+## [26.1a7](https://github.com/anze3db/potatoq/releases/tag/26.1a7) - 2026-10-17
+
+### Highlights
+
 - **`None` now means "no limit" for `time_limit`, `soft_time_limit` and `max_retries`**
   on a task (`@app.task(...)` and Django's `@task(...)`), as in Celery. They used to fall
   back to the app-wide settings, so `time_limit=None` still killed the task after 30
@@ -19,6 +23,25 @@ next release. Everything else is generated from pull request titles by
   a time limit raises the consumer timeout to a day.
 - **`potatoq worker --time-limit 0`** (and `--soft-time-limit 0`) turn the limits off;
   `0` used to be ignored.
+
+### Changes
+
+* Release with REST-only gh calls; --no-dry-run pushes
+* Let time_limit=None turn a task's time limit off
+* Let None mean no limit for soft_time_limit and max_retries; --time-limit 0
+* Stop tracking a local Redis dump.rdb
+* Name every task the deploy check test finds when it fails
+* Finalize the Django app before the deploy check test filters its tasks
+
+<!-- Release notes generated using configuration in .github/release.yml at main -->
+
+
+
+**Full Changelog**: https://github.com/anze3db/potatoq/compare/26.1a6...26.1a7
+
+### Contributors
+
+Thank you to everyone who contributed to this release: @anze3db
 
 ## [26.1a6](https://github.com/anze3db/potatoq/releases/tag/26.1a6) - 2026-10-16
 
