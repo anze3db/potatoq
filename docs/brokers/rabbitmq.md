@@ -50,7 +50,8 @@ app = Potatoq(
 RabbitMQ gives up on a delivery that stays unacknowledged longer than its *consumer
 timeout* (30 minutes by default) and hands the message to another worker, while the
 first one is still running it. potatoq asks for a timeout 5 minutes above the longest
-time limit of the tasks the worker has registered, but RabbitMQ only honours that from
+time limit of the tasks the worker has registered (a day if any of them has no limit),
+but RabbitMQ only honours that from
 **4.3**. On older servers, the server-wide `consumer_timeout` applies: raise it in
 `rabbitmq.conf`, or set a policy on potatoq's queues (merge it with any policy they
 already have, only one applies per queue):

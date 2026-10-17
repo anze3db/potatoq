@@ -291,6 +291,14 @@ def test_django_61_task_options_reach_potatoq(django_env):
     assert ptask.ignore_result is False
 
 
+def test_potatoq_task_time_limit_none_means_no_limit(django_env):
+    from djangoproj.shop.jobs import never_retried, unlimited
+
+    assert django_env.resolve_task(unlimited.module_path).resolved_time_limits() == (None, None)
+    defaults = django_env.resolve_task(never_retried.module_path)
+    assert defaults.resolved_time_limits()[0] == django_env.conf.task_time_limit
+
+
 def test_potatoq_task_decorator_rejects_unknown_options(django_env):
     from potatoq.contrib.django.tasks import task
 

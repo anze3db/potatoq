@@ -52,3 +52,8 @@ if django.VERSION >= (6, 1):
 @potatoq_task(queue_name="shop", autoretry_for=())
 def never_retried():
     raise ConnectionError("down")
+
+
+@potatoq_task(queue_name="shop", time_limit=None)
+def unlimited():
+    return "ok"

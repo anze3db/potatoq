@@ -161,8 +161,9 @@ optimized for 4.3.
   thread-safe, so every channel operation is marshalled onto that thread. With several
   `-Q` queues, the other consumers are paused while a task runs, so nothing waits in a
   local buffer.
-* `x-consumer-timeout` is set on each consumer to `task_time_limit` + 5 min, so the 30 min
-  default never kills a healthy long task.
+* `x-consumer-timeout` is set on each consumer to the longest time limit of its tasks
+  + 5 min (a day if one has no limit), so the 30 min default never kills a healthy long
+  task.
 * **Acks**: success is publish follow-ups (confirmed), then ack. Retry is publish the new
   message through the delay cascade, then ack. Shutdown is `nack(requeue)`, which on 4.3
   doesn't count towards the delivery limit. A failure is published to the DLX with the

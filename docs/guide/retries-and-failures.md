@@ -150,6 +150,9 @@ The soft limit raises `SoftTimeLimitExceeded` inside the task, by default 30 sec
 before the hard limit. If the task is still running at the hard limit, the worker kills
 the process, records a `TimeLimitExceeded` failure, and replaces the process.
 
+`time_limit=None` (or `0`) turns the limit off for one task; leaving `time_limit` out
+uses `task_time_limit`. Per call, `apply_async(time_limit=0)` turns it off.
+
 ## When a worker process dies
 
 If a process dies mid-task (OOM killer, segfault, `kill -9`), the supervisor notices

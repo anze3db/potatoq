@@ -505,6 +505,13 @@ def test_consumer_timeout_covers_the_longest_task_time_limit(rmq):
     assert consumer._consume_arguments() == {"x-consumer-timeout": (4 * 3600 + 300) * 1000}
     rmq.conf.task_time_limit = None  # no limit at all: a day
     assert consumer._consume_arguments() == {"x-consumer-timeout": (24 * 3600 + 300) * 1000}
+    rmq.conf.task_time_limit = 30 * 60
+
+    @rmq.task(name="t.unlimited", time_limit=None)
+    def unlimited():
+        pass
+
+    assert consumer._consume_arguments() == {"x-consumer-timeout": (24 * 3600 + 300) * 1000}  # a day
 
 
 def test_consumer_reconnects_when_rabbitmq_cancels_it(rmq, caplog):

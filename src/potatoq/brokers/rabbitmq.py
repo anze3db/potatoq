@@ -506,8 +506,9 @@ class RabbitMQConsumer(Consumer):
         # Above the longest time limit of any task this worker runs: RabbitMQ (4.3+)
         # returns a delivery to the queue once it's been unacked this long.
         app = self.broker.app
-        limits = [app.conf.task_time_limit, *(getattr(t, "time_limit", None) for t in app._tasks.values())]
-        longest = 24 * 3600.0 if app.conf.task_time_limit is None else max(float(x) for x in limits if x)
+        limits = [app.conf.task_time_limit, *(t.resolved_time_limits()[0] for t in app._tasks.values())]
+        # With no limit (globally or on any task): a day.
+        longest = max(float(x) for x in limits) if all(limits) else 24 * 3600.0
         return {"x-consumer-timeout": int((longest + 300) * 1000)}
 
     def _on_cancelled(self, method_frame: Any) -> None:

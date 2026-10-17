@@ -111,6 +111,26 @@ def test_resolved_time_limits(memory_app):
     assert defaults.resolved_time_limits() == (None, 3)
 
 
+@pytest.mark.parametrize("limit", [None, 0, timedelta(0)])
+def test_time_limit_none_or_zero_means_no_limit(memory_app, limit):
+    """Only a time_limit the task leaves unset falls back to task_time_limit."""
+
+    @memory_app.task(time_limit=limit)
+    def unlimited():
+        pass
+
+    @memory_app.task
+    def defaults():
+        pass
+
+    assert unlimited.resolved_time_limits() == (None, None)
+    assert defaults.resolved_time_limits()[0] == memory_app.conf.task_time_limit == 30 * 60
+    # Per call: 0 turns it off (None there means "the task's own limit").
+    assert defaults.build_message([], {}, time_limit=0).options == {"time_limit": 0}
+    assert defaults.resolved_time_limits({"time_limit": 0}) == (None, None)
+    assert defaults.build_message([], {}, time_limit=None).options == {}
+
+
 # --- publishing ---------------------------------------------------------------------
 
 

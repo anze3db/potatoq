@@ -11,6 +11,12 @@ next release. Everything else is generated from pull request titles by
 
 ## Unreleased
 
+- **`time_limit=None` now means "no time limit"** on a task (`@app.task(time_limit=None)`,
+  and Django's `@task(time_limit=None)`). It used to fall back to `task_time_limit`, so
+  the task was still killed after 30 minutes. Leave `time_limit` out to use the
+  app-wide limit. `time_limit=0` also turns it off. On RabbitMQ, a task without a limit
+  raises the consumer timeout to a day.
+
 ## [26.1a6](https://github.com/anze3db/potatoq/releases/tag/26.1a6) - 2026-10-16
 
 ### Changes

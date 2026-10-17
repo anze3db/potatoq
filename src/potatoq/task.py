@@ -9,6 +9,7 @@ import threading
 import time
 from collections.abc import Callable
 from datetime import datetime, timedelta
+from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from . import instrumentation, serialization, states
@@ -21,6 +22,15 @@ if TYPE_CHECKING:
     from .result import AsyncResult, EagerResult
 
 logger = logging.getLogger("potatoq.task")
+
+
+class _Unset(Enum):
+    UNSET = "UNSET"
+
+
+#: ``time_limit`` that a task leaves unset: ``task_time_limit`` applies. ``None`` is
+#: different: it means "no limit".
+UNSET = _Unset.UNSET
 
 
 class Context:
@@ -149,7 +159,7 @@ class Task:
     ignore_result: bool | None = None
     store_errors_even_if_ignored: bool = False
     track_started: bool | None = None
-    time_limit: float | None = None
+    time_limit: float | timedelta | _Unset | None = UNSET  # None or 0: no limit
     soft_time_limit: float | None = None
     rate_limit: str | None = None
     queue: str | None = None
@@ -238,12 +248,12 @@ class Task:
     def resolved_time_limits(self, options: dict[str, Any] | None = None) -> tuple[float | None, float | None]:
         options = options or {}
         hard = options.get("time_limit", self.time_limit)
-        if hard is None:
+        if hard is UNSET:
             hard = self.app.conf.task_time_limit
         soft = options.get("soft_time_limit", self.soft_time_limit)
         if soft is None:
             soft = self.app.conf.task_soft_time_limit
-        hard, soft = _to_seconds(hard), _to_seconds(soft)
+        hard, soft = _to_seconds(hard) or None, _to_seconds(soft)
         if soft is None and hard:
             # Give tasks a chance to clean up before the process is killed.
             soft = max(hard - min(hard * 0.1, 30.0), hard * 0.5)

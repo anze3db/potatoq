@@ -48,6 +48,7 @@ from django.utils.module_loading import import_string
 
 from ... import states
 from ...config import load_object
+from ...task import UNSET, _Unset
 
 if TYPE_CHECKING:
     from ...app import Potatoq
@@ -94,7 +95,7 @@ _OPTIONS = (
 class PotatoqTask(Task):
     """``django.tasks.Task`` plus potatoq's per-task options."""
 
-    time_limit: float | None = None
+    time_limit: float | _Unset | None = UNSET  # None: no limit
     soft_time_limit: float | None = None
     max_retries: int | None = None
     autoretry_for: tuple[type[BaseException], ...] | None = None
@@ -209,7 +210,12 @@ class PotatoqBackend(BaseTaskBackend):
         # Read from the class: through the instance the function would be a bound method.
         if existing is not None and getattr(type(existing), "_django_func", None) is task.func:
             return existing
-        options = {opt: getattr(task, opt) for opt in _OPTIONS if getattr(task, opt, None) is not None}
+        # None means "the default" for every option but time_limit, where it means no limit.
+        options = {
+            opt: value
+            for opt in _OPTIONS
+            if (value := getattr(task, opt, UNSET)) is not UNSET and (value is not None or opt == "time_limit")
+        }
         backend_cls = type(self)
 
         def run(self_: PotatoqTaskImpl, *args: Any, **kwargs: Any) -> Any:

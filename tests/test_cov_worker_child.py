@@ -251,6 +251,24 @@ def test_process_runs_a_task_and_reports_it(app, pipe):
     assert [e["e"] for e in events(pipe[0])] == ["start", "done"]
 
 
+@pytest.mark.parametrize("limit", [None, 0])
+def test_task_without_a_time_limit_gets_no_deadline(app, pipe, limit):
+    @app.task(name="cov.unlimited", time_limit=limit)
+    def unlimited():
+        return "done"
+
+    child = make_child(app, pipe[1])
+    slot = child.slots[0]
+    slot.consumer = app.broker.consumer(["default"], "node")
+    limited, result = app.tasks["cov.add"].delay(2, 3), unlimited.delay()
+    for _ in range(2):
+        assert child._process(slot, slot.consumer.fetch(timeout=1)) is True
+    assert result.get(timeout=1) == "done"
+    hard = {e["message"]["task"]: e["hard"] for e in events(pipe[0]) if e["e"] == "start"}
+    assert hard["cov.unlimited"] is None  # the supervisor never kills it
+    assert hard["cov.add"] is not None and limited.get(timeout=1) == 5
+
+
 # --- entry point --------------------------------------------------------------------------
 
 

@@ -309,7 +309,7 @@ Celery's: potatoq uses quorum queues and refuses a name a classic queue already 
 | Serializer | JSON, or pickle if you enabled it | JSON only | If you used pickle to pass model instances or other objects, pass primary keys and load inside the task. `.delay()` tells you which argument it can't send. |
 | `.delay()` inside a DB transaction | sent immediately | sent on commit, dropped on rollback | Nothing; this fixes `DoesNotExist` races. Opt out per task with `enqueue_on_commit=False` or globally with `task_enqueue_on_commit = False`. |
 | `.delay()` inside a DB transaction with `task_always_eager` | runs immediately, inside the transaction | runs on commit, never on rollback, like a worker | In a `TestCase`, wrap code that enqueues inside `atomic()` in `captureOnCommitCallbacks(execute=True)` ([details](guide/testing.md#eager-mode-and-transactions)). |
-| Time limit | none | 30 min hard, soft 30 s earlier | Raise it for long tasks: `@app.task(time_limit=4 * 3600)`. |
+| Time limit | none | 30 min hard, soft 30 s earlier | Raise it for long tasks: `@app.task(time_limit=4 * 3600)`, or turn it off with `time_limit=None`. |
 | Automatic retries | none unless `autoretry_for` or `self.retry()` | the same | Nothing. |
 | Retries before giving up | 3 | 10 | Set `max_retries=3` on a task (or `task_max_retries = 3`) to keep the old limit. |
 | `self.retry()` without countdown | 180 s | exponential backoff (about 10 s, 20 s, 40 s …) | Set `default_retry_delay` on the task (or `task_retry_backoff = False`) to get the old behaviour. |
