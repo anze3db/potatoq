@@ -219,8 +219,10 @@ def test_deploy_check_reports_tasks_workers_cant_run(django_env, monkeypatch):
 
     monkeypatch.setattr(settings, "ROOT_URLCONF", "djangoproj.shop.views", raising=False)  # as urls.py would
     # Only the project's tasks (other tests register theirs on this app too); other tests
-    # also expect the views module, and its task, not to be imported yet.
-    project = {k: v for k, v in django_env._tasks.items() if k.startswith(("djangoproj.", "potatoq."))}
+    # also expect the views module, and its task, not to be imported yet. Through .tasks,
+    # which finalizes the app: that registers other tests' @shared_tasks, filtered out here
+    # rather than by the check finalizing it later.
+    project = {k: v for k, v in django_env.tasks.items() if k.startswith(("djangoproj.", "potatoq."))}
     monkeypatch.setattr(django_env, "_tasks", type(django_env._tasks)(project))
     try:
         found = checks.run_checks(include_deployment_checks=True, tags=["potatoq"])
