@@ -1,0 +1,145 @@
+name: Bug report
+description: Something in potatoq doesn't work the way the docs say it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! The more of this you fill in, the faster it gets fixed.
+        Found a security problem? Please don't open an issue; see [SECURITY.md](https://github.com/anze3db/potatoq/blob/main/SECURITY.md).
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce it
+      description: |
+        The smallest task, settings and commands that show the problem. A single file with
+        `app = Potatoq(...)`, one `@app.task` and the `.delay()` call is ideal.
+      render: python
+    validations:
+      required: true
+
+  - type: textarea
+    id: banner
+    attributes:
+      label: Worker startup banner
+      description: |
+        The lines `potatoq worker` logs when it starts, from `Worker … is ready (potatoq …)`
+        down to `tasks`. They show the version, broker, queues, workers, limits, retries and
+        schedule. The broker password is already masked.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and traceback
+      description: |
+        The worker's log around the problem and the full traceback, if there is one.
+        `--loglevel DEBUG` adds a lot of detail. Remove anything private from task arguments.
+      render: text
+
+  - type: input
+    id: command
+    attributes:
+      label: Worker command
+      description: Exactly how you start the worker, and what runs it (systemd, Docker, Kubernetes, supervisord, Procfile, a terminal…).
+      placeholder: "uv run potatoq -A proj worker -c 4 --threads 2, under systemd"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: broker
+    attributes:
+      label: Broker
+      options:
+        - Redis / Valkey
+        - PostgreSQL
+        - RabbitMQ
+        - SQLite
+        - The Django database
+        - Memory (tests)
+    validations:
+      required: true
+
+  - type: input
+    id: broker-version
+    attributes:
+      label: Broker server version
+      description: "For example `redis-server --version`, `SELECT version();`, `rabbitmqctl version`, or `python -c 'import sqlite3; print(sqlite3.sqlite_version)'`."
+      placeholder: "Redis 7.4.1"
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      description: The output of `python -VV`. It also says whether the build is free-threaded.
+      placeholder: "Python 3.14.0 free-threading build (main, …)"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "Debian 13 in Docker, macOS 26, Rocky Linux 9…"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: integrations
+    attributes:
+      label: Integrations in use
+      multiple: true
+      options:
+        - Django (potatoq.contrib.django)
+        - Django tasks (django.tasks backend)
+        - Flask
+        - FastAPI
+        - SQLAlchemy
+        - OpenTelemetry / Logfire / Datadog
+        - Sentry
+        - New Relic
+        - None
+
+  - type: textarea
+    id: packages
+    attributes:
+      label: Related package versions
+      description: Django, the broker's client library, and anything else involved.
+      placeholder: |
+        django==6.0.1
+        redis==6.2.0
+      render: text
+
+  - type: textarea
+    id: settings
+    attributes:
+      label: potatoq settings
+      description: Any settings you changed from the defaults (`app.conf`, or `CELERY_`/`POTATOQ_` settings in Django). Leave out credentials.
+      render: python
+
+  - type: dropdown
+    id: migrating
+    attributes:
+      label: Migrating from another queue?
+      description: Many surprises come from a difference in behaviour, not a bug. Knowing where you came from helps.
+      options:
+        - "No"
+        - Celery
+        - Dramatiq
+        - RQ
+        - Huey
+        - schedule / APScheduler
+        - Something else
