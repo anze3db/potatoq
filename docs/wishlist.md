@@ -177,6 +177,19 @@ What people get from Flower and friends today.
   only been checked locally (actionlint, zizmor), and the release-notes API call hasn't
   been exercised yet.
 - [ ] **Benchmarks in CI**, to catch performance regressions.
+- [ ] **A chaos test for "no task is ever lost".** It's the promise people care about
+  most, and today it's tested one failure at a time, in controlled spots: a task that
+  kills its own process, a hard time limit, a SIGTERM mid-task. Recovering a lost
+  machine is only simulated at the broker level. On Postgres, SQLite and Redis that
+  recovery is potatoq's own code (heartbeats, leases, fencing), not the broker's. The
+  test, on every broker: enqueue a few hundred tasks that record their id when they
+  finish; run several workers (prefork and `--threads`, with a short
+  `worker_dead_after`); while they work, `kill -9` random child processes and whole
+  workers, supervisor included, and start replacements. Then check that every task
+  finished at least once, nothing is left waiting or claimed, and that only tasks
+  running when a kill landed ran twice. A seeded random kill schedule makes a failure
+  reproducible. A short run belongs in CI and a long soak in a `just` recipe. Later:
+  restart the broker itself too (Redis with AOF, a RabbitMQ node).
 - [ ] **Versioned docs**, one per release.
 
 ## Deliberately not planned
