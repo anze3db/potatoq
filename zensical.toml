@@ -66,6 +66,7 @@ nav = [
 ]
 
 [project.theme]
+custom_dir = "overrides"
 language = "en"
 logo = "assets/images/logo.svg"
 favicon = "assets/images/logo.svg"
@@ -118,6 +119,10 @@ primary = "custom"
 accent = "custom"
 toggle.icon = "lucide/moon"
 toggle.name = "Switch to system preference"
+
+[project.extra]
+# Used in the home page title and link previews (overrides/main.html)
+tagline = "a Celery-compatible task queue with production-ready defaults"
 
 [[project.extra.social]]
 icon = "fontawesome/brands/github"

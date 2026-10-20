@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{#- The home page's front matter title is just the site name; don't repeat it. -#}
+{% block htmltitle %}
+  {% if page.canonical_url == config.site_url %}
+    <title>{{ config.site_name }}: {{ config.extra.tagline }}</title>
+  {% else %}
+    {{ super() }}
+  {% endif %}
+{% endblock %}
+
+{#- Link previews (Open Graph, X/Twitter cards) for every page, with one shared banner. -#}
+{% block extrahead %}
+  {% if page.canonical_url == config.site_url %}
+    {% set social_title = config.site_name ~ ": " ~ config.extra.tagline %}
+  {% elif page.meta and page.meta.title %}
+    {% set social_title = page.meta.title ~ " - " ~ config.site_name %}
+  {% elif page.title %}
+    {% set social_title = (page.title | striptags) ~ " - " ~ config.site_name %}
+  {% else %}
+    {% set social_title = config.site_name %}
+  {% endif %}
+  {% set social_description = page.meta.description if page.meta and page.meta.description else config.site_description %}
+  {% set social_image = config.site_url ~ "assets/images/social.png" %}
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="{{ config.site_name }}">
+  <meta property="og:title" content="{{ social_title }}">
+  <meta property="og:description" content="{{ social_description }}">
+  {% if page.canonical_url %}
+    <meta property="og:url" content="{{ page.canonical_url }}">
+  {% endif %}
+  <meta property="og:image" content="{{ social_image }}">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="{{ config.site_name }}: {{ config.extra.tagline }}">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{{ social_title }}">
+  <meta name="twitter:description" content="{{ social_description }}">
+  <meta name="twitter:image" content="{{ social_image }}">
+{% endblock %}
