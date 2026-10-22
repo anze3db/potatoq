@@ -165,28 +165,46 @@ async function openTask(id) {
 
 function renderTask(t) {
   const waiting = t.waiting;
-  const stateLabel = t.state || (waiting ? waiting.state.toUpperCase() : null);
+  const dead = t.dead;
+  const stateLabel = t.state || (dead ? "DEAD-LETTERED" : waiting ? waiting.state.toUpperCase() : null);
+  const at = (ts) => (ts ? when(ts) : null);
   $("task-fields").replaceChildren(
     ...field("State", stateLabel || "Unknown: no result stored and not in a queue",
       { class: stateLabel ? `state-${stateLabel}` : "muted" }),
-    ...field("Task", t.task || waiting?.task),
-    ...field("Queue", waiting?.queue),
-    ...field("Arguments", show(t.args ?? waiting?.args), { class: "mono" }),
-    ...field("Keyword args", show(t.kwargs ?? waiting?.kwargs), { class: "mono" }),
-    ...field("Runs at", waiting?.eta ? when(waiting.eta) : null),
-    ...field("Enqueued", when(t.enqueued_at ?? waiting?.enqueued_at)),
-    ...field("Started", t.started_at ? when(t.started_at) : null),
-    ...field("Finished", t.done_at ? when(t.done_at) : null),
+    ...field("Task", t.task || waiting?.task || dead?.task),
+    ...field("Queue", waiting?.queue || dead?.queue),
+    ...field("Arguments", show(t.args ?? waiting?.args ?? dead?.args), { class: "mono" }),
+    ...field("Keyword args", show(t.kwargs ?? waiting?.kwargs ?? dead?.kwargs), { class: "mono" }),
+    ...field("Runs at", at(waiting?.eta)),
+    ...field("Enqueued", at(t.enqueued_at ?? waiting?.enqueued_at)),
+    ...field("Started", at(t.started_at)),
+    ...field("Finished", at(t.done_at)),
+    ...field("Dead-lettered", at(dead?.died_at)),
     ...field("Worker", t.worker),
-    ...field("Retries", t.retries ? t.retries : null),
+    ...field("Retries", t.retries || dead?.retries || null),
     ...field("Result", t.state === "SUCCESS" ? show(t.result) : null, { class: "mono" }),
     ...field("Error", t.state === "FAILURE" ? t.error || show(t.result) : null, { class: "mono" }),
   );
-  $("task-traceback").textContent = t.traceback || "";
-  $("task-traceback").hidden = !t.traceback;
-  const revocable = waiting && waiting.state !== "running" && !state.read_only;
-  $("revoke").hidden = !revocable;
+  const details = t.traceback || dead?.reason || "";
+  $("task-traceback").textContent = details;
+  $("task-traceback").hidden = !details;
+  $("retry").hidden = !dead || state.read_only;
+  $("revoke").hidden = !(waiting && waiting.state !== "running" && !state.read_only);
 }
+
+$("retry").addEventListener("click", async (event) => {
+  const id = openTaskId;
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    await action(`dead/${encodeURIComponent(id)}/retry`);
+    await openTask(id);
+  } catch (error) {
+    alert(`Couldn't retry ${id}: ${error.message}`);
+  }
+  button.disabled = false;
+  refresh();
+});
 
 $("revoke").addEventListener("click", async (event) => {
   const id = openTaskId;

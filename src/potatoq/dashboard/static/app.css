@@ -137,9 +137,9 @@ pre {
   margin: 1rem 0 0; padding: 0.75rem; border-radius: 8px; overflow: auto; max-height: 40vh;
   background: var(--bg); border: 1px solid var(--border); font-family: var(--mono); font-size: 0.8rem;
 }
-.dialog-actions { display: flex; justify-content: flex-end; margin-top: 1rem; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem; }
 .state-SUCCESS { color: var(--ok); font-weight: 600; }
-.state-FAILURE, .state-REVOKED, .state-REJECTED { color: var(--bad); font-weight: 600; }
+.state-FAILURE, .state-REVOKED, .state-REJECTED, .state-DEAD-LETTERED { color: var(--bad); font-weight: 600; }
 .state-STARTED, .state-RETRY, .state-PENDING, .state-SCHEDULED, .state-READY, .state-RUNNING {
   color: var(--warn); font-weight: 600;
 }

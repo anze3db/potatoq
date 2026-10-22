@@ -44,6 +44,8 @@ logger = logging.getLogger("potatoq.dashboard")
 
 #: Dead letters fetched for the overview; the page says "100+" beyond that.
 DEAD_LETTER_LIMIT = 100
+#: How many of the newest dead letters a task lookup searches.
+DEAD_LETTER_SEARCH = 1000
 
 ACTION_HEADER = "x-potatoq-dashboard"
 
@@ -233,7 +235,7 @@ class Dashboard:
     def task(self, task_id: str) -> dict[str, Any]:
         """What the result backend and the broker know about one task."""
         app = self.app
-        out: dict[str, Any] = {"id": task_id, "state": None, "waiting": None}
+        out: dict[str, Any] = {"id": task_id, "state": None, "waiting": None, "dead": None}
         record = app.backend.get_result(task_id) if app.backend is not None else None
         if record is not None:
             out.update({
@@ -247,6 +249,9 @@ class Dashboard:
                 details = error.get("exc_message")
                 text = ", ".join(map(str, details)) if isinstance(details, list) else str(details or "")
                 out["error"] = f"{error['exc_type']}: {text}" if text else str(error["exc_type"])
+        # Without stored results (Redis' default) the dead letters are the only record of
+        # a task that failed for good.
+        out["dead"] = next((e for e in self.dead_letters(DEAD_LETTER_SEARCH) if e["id"] == task_id), None)
         peeked = app.broker.peek(task_id)
         if peeked is not None:
             message, state = peeked

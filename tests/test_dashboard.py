@@ -166,13 +166,14 @@ def test_task_details(memory_app, tasks):
     data = api(dashboard, f"tasks/{failed.id}")[1]
     assert data["state"] == "FAILURE" and data["error"] == "ConnectionError: gateway timed out for order 9"
     assert "Traceback" in data["traceback"]
+    assert data["dead"]["args"] == [9] and "gateway timed out" in data["dead"]["reason"]
     assert api(dashboard, f"tasks/{bare.id}")[1]["error"] == "KeyError"
 
     data = api(dashboard, f"tasks/{waiting.id}")[1]
     assert data["waiting"]["state"] == "scheduled" and data["waiting"]["args"] == [1, 1]
     assert data["waiting"]["eta"] > time.time()
 
-    assert api(dashboard, "tasks/nope")[1] == {"id": "nope", "state": None, "waiting": None}
+    assert api(dashboard, "tasks/nope")[1] == {"id": "nope", "state": None, "waiting": None, "dead": None}
 
 
 def test_task_details_without_a_result_backend():
@@ -180,8 +181,28 @@ def test_task_details_without_a_result_backend():
     app.conf.result_backend = "disabled"
     try:
         assert app.backend is None
-        assert api(Dashboard(app), "tasks/x")[1] == {"id": "x", "state": None, "waiting": None}
+        assert api(Dashboard(app), "tasks/x")[1] == {"id": "x", "state": None, "waiting": None, "dead": None}
         assert api(Dashboard(app), "overview")[1]["results"] is None
+    finally:
+        app.close()
+
+
+def test_dead_letters_are_found_without_stored_results():
+    """Redis doesn't store results unless asked: a failed task is only a dead letter."""
+    app = Potatoq("nores", broker="memory://", set_as_current=False)
+    app.conf.result_backend = "disabled"
+    try:
+
+        @app.task
+        def charge(order_id):
+            raise ConnectionError(f"gateway timed out for order {order_id}")
+
+        result = charge.delay(3)
+        drain(app)
+        data = api(Dashboard(app), f"tasks/{result.id}")[1]
+        assert data["state"] is None and data["waiting"] is None
+        assert (data["dead"]["id"], data["dead"]["task"], data["dead"]["args"]) == (result.id, charge.name, [3])
+        assert "gateway timed out for order 3" in data["dead"]["reason"]
     finally:
         app.close()
 
