@@ -26,6 +26,7 @@ nav = [
     "guide/transactions.md",
     "guide/testing.md",
     "guide/observability.md",
+    "guide/dashboard.md",
   ] },
   { "Integrations" = [
     "integrations/django.md",

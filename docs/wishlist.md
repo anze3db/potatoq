@@ -114,11 +114,12 @@ Behaviour that's accepted for compatibility but not implemented yet.
 
 ## Monitoring and operations
 
-What people get from Flower and friends today.
+What people get from Flower and friends today, beyond the [dashboard](guide/dashboard.md).
 
-- [ ] **Web dashboard.** Queues, running tasks, workers, dead letters (with replay),
-  results and schedules. A Flower replacement, ideally mountable in Django, FastAPI
-  and Starlette, or runnable standalone (`potatoq dashboard`).
+- [ ] **Task history in the [dashboard](guide/dashboard.md)**: a searchable list of
+  recent tasks with their arguments, runtimes and outcomes, like Flower's task list.
+  It needs a record of every finished task (a capped table or stream per broker), since
+  there's no event stream. Also charts of throughput and runtimes.
 - [ ] **Prometheus metrics.** Queue depth, **age of the oldest waiting task** (the
   metric to alert on, per Solid Queue and GoodJob), throughput, runtime histograms,
   failures, retries, dead letters and worker counts.

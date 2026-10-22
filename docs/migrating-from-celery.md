@@ -340,10 +340,11 @@ The full list of gaps and planned features is in the [wishlist](wishlist.md).
   planned.
 * **`revoke(terminate=True)`** of a running task. Waiting tasks are revoked; use time
   limits for running ones.
-* `celery multi`, bootsteps, custom remote-control commands, events and Flower.
+* `celery multi`, bootsteps, custom remote-control commands and events.
   Instead of `celery multi`, run one worker per host under a process manager (see the
   [systemd example](guide/workers.md#systemd)); `potatoq status` and `potatoq inspect`
-  read worker heartbeats.
+  read worker heartbeats. Instead of Flower, run `potatoq dashboard` (same port, 5555)
+  or mount the [dashboard](guide/dashboard.md) in your app; it has no task history yet.
 * Redis Cluster, `solar` schedules, `chunks` (implemented via `starmap`, lightly tested).
 
 Coming from Dramatiq instead? See [Migrating from Dramatiq](migrating-from-dramatiq.md).

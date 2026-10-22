@@ -11,6 +11,12 @@ next release. Everything else is generated from pull request titles by
 
 ## Unreleased
 
+- **Dashboard**, a Flower replacement with no extra dependencies: `potatoq dashboard`
+  shows live workers and their running tasks, queue sizes, periodic tasks, dead letters
+  (with retry) and any task by ID (with revoke for waiting ones). Mount it in Django
+  (staff only) with `include("potatoq.contrib.django.dashboard")`, or in FastAPI,
+  Starlette or Flask through its ASGI and WSGI apps.
+
 ## [26.1a7](https://github.com/anze3db/potatoq/releases/tag/26.1a7) - 2026-10-17
 
 ### Highlights

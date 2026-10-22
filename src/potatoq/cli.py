@@ -184,6 +184,14 @@ def build_parser(prog: str = "potatoq") -> argparse.ArgumentParser:
     rv = sub.add_parser("revoke", help="Revoke tasks that haven't started")
     rv.add_argument("task_ids", nargs="+")
     sub.add_parser("shell", help="Python shell with the app loaded")
+    db = sub.add_parser("dashboard", help="Web dashboard: workers, queues, schedules, dead letters")
+    db.add_argument("--host", default="127.0.0.1", help="Address to listen on (default: 127.0.0.1)")
+    db.add_argument("--port", type=int, default=5555, help="Port (default: 5555, like Flower)")
+    db.add_argument(
+        "--auth", default=os.environ.get("POTATOQ_DASHBOARD_AUTH"),
+        help="user:password for HTTP basic auth (or set POTATOQ_DASHBOARD_AUTH)",
+    )  # fmt: skip
+    db.add_argument("--read-only", action="store_true", help="No retry or revoke buttons")
     return parser
 
 
@@ -650,6 +658,33 @@ def cmd_shell(app: Potatoq, args: argparse.Namespace) -> int:
         **{t.name.rsplit(".", 1)[-1]: t for t in app.tasks.values() if not t.name.startswith("potatoq.")},
     }
     code.interact(local=namespace, banner=f"potatoq shell ({app})")
+    return 0
+
+
+def cmd_dashboard(app: Potatoq, args: argparse.Namespace) -> int:
+    from .dashboard import Dashboard, serve
+
+    out = _out()
+    auth = None
+    if args.auth:
+        username, sep, password = args.auth.partition(":")
+        if not sep or not username or not password:
+            print(out.line("error", "--auth must be user:password", "red"), file=sys.stderr)
+            return 2
+        auth = (username, password)
+    server = serve(Dashboard(app, read_only=args.read_only, auth=auth), args.host, args.port)
+    host, port = server.server_address[:2]
+    shown = f"[{host}]" if ":" in host else host
+    print(out.line("dashboard", f"{out.icon('🥔')}http://{shown}:{port}/ for {redact_url(app.broker.url)}", "green"))
+    if auth is None and args.host not in ("127.0.0.1", "localhost", "::1"):
+        print(out.line("warning", "Listening beyond localhost without --auth: anyone who can reach it can "
+                       "replay and revoke tasks", "yellow"))  # fmt: skip
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
     return 0
 
 

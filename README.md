@@ -202,7 +202,11 @@ $ potatoq -A proj dead retry <task-id>   # replay one
 $ potatoq -A proj inspect active         # Celery-style inspect
 $ potatoq -A proj call proj.tasks.add -a '[2, 2]'
 $ potatoq -A proj worker -P solo         # run in-process, one task at a time (pdb-friendly)
+$ potatoq -A proj dashboard              # web dashboard on :5555, a Flower replacement
 ```
+
+The [dashboard](https://anze3db.github.io/potatoq/guide/dashboard/) needs no extra
+dependencies. It also mounts inside Django (staff only), FastAPI or Flask.
 
 ## Testing
 
