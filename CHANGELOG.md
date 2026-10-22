@@ -11,6 +11,10 @@ next release. Everything else is generated from pull request titles by
 
 ## Unreleased
 
+## [26.1a8](https://github.com/anze3db/potatoq/releases/tag/26.1a8) - 2026-10-22
+
+### Highlights
+
 - **🥔 A web dashboard: a Flower replacement with no extra dependencies.**
   [Docs](https://anze3db.github.io/potatoq/guide/dashboard/) ·
   [#3](https://github.com/anze3db/potatoq/issues/3)
@@ -28,6 +32,24 @@ next release. Everything else is generated from pull request titles by
     and `--read-only`. **Or mount it**: `include("potatoq.contrib.django.dashboard")`
     for Django staff users, `Dashboard(app).asgi` in FastAPI or Starlette, and
     `Dashboard(app)` as a WSGI app in Flask or gunicorn.
+
+### Changes
+
+* Add a bug report form and point questions to Discussions
+* Docs: add link preview banners and Open Graph tags
+* Wishlist: a chaos test that kills workers and checks no task is lost
+* Add a web dashboard, a Flower replacement with no extra dependencies
+* Changelog: a fuller highlight for the dashboard
+
+<!-- Release notes generated using configuration in .github/release.yml at main -->
+
+
+
+**Full Changelog**: https://github.com/anze3db/potatoq/compare/26.1a7...26.1a8
+
+### Contributors
+
+Thank you to everyone who contributed to this release: @anze3db
 
 ## [26.1a7](https://github.com/anze3db/potatoq/releases/tag/26.1a7) - 2026-10-17
 
