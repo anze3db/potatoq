@@ -11,11 +11,23 @@ next release. Everything else is generated from pull request titles by
 
 ## Unreleased
 
-- **Dashboard**, a Flower replacement with no extra dependencies: `potatoq dashboard`
-  shows live workers and their running tasks, queue sizes, periodic tasks, dead letters
-  (with retry) and any task by ID (with revoke for waiting ones). Mount it in Django
-  (staff only) with `include("potatoq.contrib.django.dashboard")`, or in FastAPI,
-  Starlette or Flask through its ASGI and WSGI apps.
+- **🥔 A web dashboard: a Flower replacement with no extra dependencies.**
+  [Docs](https://anze3db.github.io/potatoq/guide/dashboard/) ·
+  [#3](https://github.com/anze3db/potatoq/issues/3)
+
+  ![The potatoq dashboard: workers, queues, periodic tasks and dead letters](https://anze3db.github.io/potatoq/assets/images/dashboard.png)
+
+  - **Live workers** and the tasks each one is running right now, **queue sizes**, and
+    **periodic tasks** with their next run and when they were last sent.
+  - **Dead letters** with their reason, and a **Retry** button to send one back.
+  - **Any task by ID**: its state, arguments, timings, worker, and result or traceback.
+    **Revoke** one that hasn't started yet.
+  - It reads the broker and the result backend directly, so there are no events to turn
+    on, nothing is lost when it restarts, and it works with every broker.
+  - **Run it** with `potatoq dashboard`, on Flower's port 5555, with `--auth user:password`
+    and `--read-only`. **Or mount it**: `include("potatoq.contrib.django.dashboard")`
+    for Django staff users, `Dashboard(app).asgi` in FastAPI or Starlette, and
+    `Dashboard(app)` as a WSGI app in Flask or gunicorn.
 
 ## [26.1a7](https://github.com/anze3db/potatoq/releases/tag/26.1a7) - 2026-10-17
 
