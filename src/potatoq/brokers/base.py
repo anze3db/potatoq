@@ -286,3 +286,11 @@ class Broker:
 
     def dead_letters(self, limit: int = 100) -> list[dict[str, Any]]:
         return []
+
+    def requeue_dead(self, task_id: str) -> bool:
+        """Put a dead-lettered task back on its queue. False if it isn't a dead letter."""
+        raise NotImplementedError
+
+    def delete_dead(self, task_id: str) -> bool:
+        """Forget a dead-lettered task for good. False if it isn't a dead letter."""
+        raise NotImplementedError

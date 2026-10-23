@@ -156,13 +156,16 @@ def build_parser(prog: str = "potatoq") -> argparse.ArgumentParser:
     p.add_argument("-Q", "--queues", help="Queues to purge (default: default queue)")
     p.add_argument("-f", "--force", action="store_true")
 
-    d = sub.add_parser("dead", help="Inspect and replay dead-lettered tasks")
+    d = sub.add_parser("dead", help="Inspect, replay and delete dead-lettered tasks")
     dsub = d.add_subparsers(dest="dead_command")
     dl = dsub.add_parser("list")
     dl.add_argument("--limit", type=int, default=20)
     dl.add_argument("--json", action="store_true")
     dr = dsub.add_parser("retry")
     dr.add_argument("task_ids", nargs="+")
+    dd = dsub.add_parser("delete")
+    dd.add_argument("task_ids", nargs="+")
+    dd.add_argument("-f", "--force", action="store_true", help="Don't ask first")
 
     c = sub.add_parser("call", help="Enqueue a task by name")
     c.add_argument("name")
@@ -191,7 +194,7 @@ def build_parser(prog: str = "potatoq") -> argparse.ArgumentParser:
         "--auth", default=os.environ.get("POTATOQ_DASHBOARD_AUTH"),
         help="user:password for HTTP basic auth (or set POTATOQ_DASHBOARD_AUTH)",
     )  # fmt: skip
-    db.add_argument("--read-only", action="store_true", help="No retry or revoke buttons")
+    db.add_argument("--read-only", action="store_true", help="No retry, delete or revoke buttons")
     return parser
 
 
@@ -544,8 +547,20 @@ def cmd_dead(app: Potatoq, args: argparse.Namespace) -> int:
     out = _out()
     if args.dead_command == "retry":
         for task_id in args.task_ids:
-            if app.broker.requeue_dead(task_id):  # type: ignore[attr-defined]
+            if app.broker.requeue_dead(task_id):
                 print(out.line("requeued", f"{out.icon('🔁')}{task_id}", "green"))
+            else:
+                print(out.line("missing", f"{task_id} isn't in the dead letters", "red"))
+        return 0
+    if args.dead_command == "delete":
+        n = len(args.task_ids)
+        if not args.force:
+            question = f"Delete {n} dead-lettered task{'s' if n != 1 else ''} for good? [y/N] "
+            if input(out.line("delete", question, "yellow")).lower() not in ("y", "yes"):
+                return 1
+        for task_id in args.task_ids:
+            if app.broker.delete_dead(task_id):
+                print(out.line("deleted", f"{out.icon('🗑️')}{task_id}", "green"))
             else:
                 print(out.line("missing", f"{task_id} isn't in the dead letters", "red"))
         return 0
@@ -678,7 +693,7 @@ def cmd_dashboard(app: Potatoq, args: argparse.Namespace) -> int:
     print(out.line("dashboard", f"{out.icon('🥔')}http://{shown}:{port}/ for {redact_url(app.broker.url)}", "green"))
     if auth is None and args.host not in ("127.0.0.1", "localhost", "::1"):
         print(out.line("warning", "Listening beyond localhost without --auth: anyone who can reach it can "
-                       "replay and revoke tasks", "yellow"))  # fmt: skip
+                       "replay, delete and revoke tasks", "yellow"))  # fmt: skip
     try:
         server.serve_forever()
     except KeyboardInterrupt:

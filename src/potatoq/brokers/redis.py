@@ -297,6 +297,14 @@ elseif cmd == 'requeue_dead' then
   push_ready(v[1], id, tonumber(v[2]), false)
   return 1
 
+elseif cmd == 'delete_dead' then
+  local id = ARGV[3]
+  local jk = jkey(id)
+  if redis.call('HGET', jk, 'st') ~= 'dead' then return 0 end
+  redis.call('ZREM', P .. ':dead', id)
+  redis.call('DEL', jk)
+  return 1
+
 elseif cmd == 'trim_dead' then
   -- max_entries, min_died_ms
   local key = P .. ':dead'
@@ -590,6 +598,9 @@ class RedisBroker(Broker):
 
     def requeue_dead(self, task_id: str) -> bool:
         return bool(self.run("requeue_dead", task_id))
+
+    def delete_dead(self, task_id: str) -> bool:
+        return bool(self.run("delete_dead", task_id))
 
 
 class RedisConsumer(Consumer):

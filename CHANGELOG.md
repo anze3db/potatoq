@@ -11,6 +11,11 @@ next release. Everything else is generated from pull request titles by
 
 ## Unreleased
 
+- **Dashboard: delete dead letters** that should never run again, with a **Delete**
+  button next to **Retry** (both ask for confirmation first), and `potatoq dead delete`
+  on the command line. Clicking a dead letter now shows its reason and traceback on
+  Redis too, where results aren't stored by default.
+
 ## [26.1a8](https://github.com/anze3db/potatoq/releases/tag/26.1a8) - 2026-10-22
 
 ### Highlights

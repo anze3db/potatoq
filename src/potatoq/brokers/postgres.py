@@ -617,6 +617,11 @@ class PostgresBroker(Broker):
 
         return self._run(_requeue)
 
+    def delete_dead(self, task_id: str) -> bool:
+        return self._run(
+            lambda conn: conn.execute(self._sql("DELETE FROM {dead} WHERE id = %s"), (task_id,)).rowcount > 0
+        )
+
 
 class PostgresConsumer(Consumer):
     broker: PostgresBroker

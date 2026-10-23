@@ -10,8 +10,8 @@ Standard library only, so ``pip install potatoq`` is enough. The core is a WSGI 
 Run it on its own with ``potatoq dashboard``, or mount it in Django with
 ``path("potatoq/", include("potatoq.contrib.django.dashboard"))``.
 
-The page is static HTML that polls a small JSON API under ``api/``. Actions (replaying
-a dead letter, revoking a waiting task) are POSTs that need the ``X-Potatoq-Dashboard``
+The page is static HTML that polls a small JSON API under ``api/``. Actions (replaying or
+deleting a dead letter, revoking a waiting task) are POSTs that need the ``X-Potatoq-Dashboard``
 header, which browsers won't send cross-site without CORS, and are off with
 ``read_only=True``.
 """
@@ -153,8 +153,10 @@ class Dashboard:
                 return _error(403, "The dashboard is read-only")
             if headers.get(ACTION_HEADER) != "1" or not _same_origin(headers):
                 return _error(403, "Actions must come from the dashboard page")
-            if len(parts) == 3 and parts[0] == "dead" and parts[2] == "retry":
-                if not self.app.broker.requeue_dead(parts[1]):  # type: ignore[attr-defined]
+            if len(parts) == 3 and parts[0] == "dead" and parts[2] in ("retry", "delete"):
+                broker = self.app.broker
+                done = broker.requeue_dead(parts[1]) if parts[2] == "retry" else broker.delete_dead(parts[1])
+                if not done:
                     return _error(404, f"{parts[1]} isn't in the dead letters")
                 return _json(200, {"ok": True})
             if len(parts) == 3 and parts[0] == "tasks" and parts[2] == "revoke":

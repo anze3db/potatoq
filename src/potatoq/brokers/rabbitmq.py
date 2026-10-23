@@ -456,6 +456,18 @@ class RabbitMQBroker(Broker):
         self._drain_dlq(visit, 100_000)
         return bool(found)
 
+    def delete_dead(self, task_id: str) -> bool:
+        found: list[bool] = []
+
+        def visit(ch: Any, method: Any, props: Any, body: bytes) -> bool:
+            if found or props.message_id != task_id:
+                return False
+            found.append(True)
+            return True  # acked without republishing: gone
+
+        self._drain_dlq(visit, 100_000)
+        return bool(found)
+
 
 class RabbitMQConsumer(Consumer):
     """Consumes in a background I/O thread; the worker's main thread runs tasks."""

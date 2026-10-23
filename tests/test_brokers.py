@@ -134,6 +134,24 @@ def test_dead_letter_and_replay(broker_app):
     c.close()
 
 
+def test_delete_dead_letter(broker_app):
+    app = broker_app
+    keep, drop = msg(app), msg(app, args=(2,))
+    app.broker.enqueue([keep, drop])
+    c = consumer(app)
+    for _ in range(2):
+        c.dead_letter(fetch(c), "boom", None)
+    assert sorted(e["id"] for e in app.broker.dead_letters()) == sorted([keep.id, drop.id])
+    assert app.broker.delete_dead(drop.id)
+    assert not app.broker.delete_dead(drop.id)
+    assert not app.broker.delete_dead("missing-id")
+    assert [e["id"] for e in app.broker.dead_letters()] == [keep.id]
+    assert fetch(c, 0.3) is None  # deleted, not requeued
+    assert app.broker.requeue_dead(keep.id)
+    c.complete(fetch(c), None, [])
+    c.close()
+
+
 def test_followups_are_enqueued_on_complete(broker_app):
     app = broker_app
     m = msg(app)

@@ -196,6 +196,9 @@ class MemoryBroker(Broker):
         self.enqueue([message])
         return True
 
+    def delete_dead(self, task_id: str) -> bool:
+        return self.dead.pop(task_id, None) is not None
+
 
 class MemoryConsumer(Consumer):
     broker: MemoryBroker

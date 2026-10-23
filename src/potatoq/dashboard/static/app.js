@@ -8,6 +8,7 @@ let paused = false;
 let lastUpdate = null;
 let state = { read_only: true, now: Date.now() / 1000 };
 let openTaskId = null;
+let openDead = null; // the dead letter shown in the task dialog, if it is one
 
 function el(tag, props = {}, ...children) {
   const node = document.createElement(tag);
@@ -107,9 +108,10 @@ function renderDead(entries) {
     el("td", {}, e.queue),
     el("td", { class: "num" }, ago(e.died_at)),
     el("td", { class: "reason", title: e.reason }, lastLine(e.reason)),
-    el("td", {}, state.read_only ? null : el("button", {
-      type: "button", class: "small", onclick: (event) => retry(e.id, event.currentTarget),
-    }, "Retry")),
+    el("td", { class: "actions" }, ...(state.read_only ? [] : [
+      el("button", { type: "button", class: "small", onclick: () => deadAction("retry", e) }, "Retry"),
+      el("button", { type: "button", class: "small outline-danger", onclick: () => deadAction("delete", e) }, "Delete"),
+    ])),
   )), 6, "No dead-lettered tasks 🎉");
 }
 
@@ -133,14 +135,23 @@ function tick() {
   else if (lastUpdate) $("updated").textContent = `Updated ${coarse((Date.now() - lastUpdate) / 1000)} ago`;
 }
 
-async function retry(id, button) {
-  button.disabled = true;
+const CONFIRM = {
+  retry: (e) => `Retry ${e.task} (${e.id})?\n\nIt goes back on the ${e.queue} queue and runs again.`,
+  delete: (e) => `Delete ${e.task} (${e.id}) for good?\n\nIt won't run again, and this can't be undone.`,
+};
+
+// Retry or delete a dead letter, after asking. Resolves to true when it happened.
+async function deadAction(kind, entry) {
+  if (!confirm(CONFIRM[kind](entry))) return false;
   try {
-    await action(`dead/${encodeURIComponent(id)}/retry`);
+    await action(`dead/${encodeURIComponent(entry.id)}/${kind}`);
+    return true;
   } catch (error) {
-    alert(`Couldn't retry ${id}: ${error.message}`);
+    alert(`Couldn't ${kind} ${entry.id}: ${error.message}`);
+    return false;
+  } finally {
+    refresh();
   }
-  refresh();
 }
 
 function field(name, value, extra = {}) {
@@ -154,7 +165,8 @@ async function openTask(id) {
   $("task-title").textContent = id;
   $("task-fields").replaceChildren(el("dd", { class: "muted" }, "Loading…"));
   $("task-traceback").hidden = true;
-  $("revoke").hidden = true;
+  $("revoke").hidden = $("retry").hidden = $("delete").hidden = true;
+  openDead = null;
   if (!dialog.open) dialog.showModal();
   try {
     renderTask(await api(`tasks/${encodeURIComponent(id)}`));
@@ -188,23 +200,24 @@ function renderTask(t) {
   const details = t.traceback || dead?.reason || "";
   $("task-traceback").textContent = details;
   $("task-traceback").hidden = !details;
-  $("retry").hidden = !dead || state.read_only;
+  openDead = dead;
+  $("retry").hidden = $("delete").hidden = !dead || state.read_only;
   $("revoke").hidden = !(waiting && waiting.state !== "running" && !state.read_only);
 }
 
-$("retry").addEventListener("click", async (event) => {
-  const id = openTaskId;
-  const button = event.currentTarget;
-  button.disabled = true;
-  try {
-    await action(`dead/${encodeURIComponent(id)}/retry`);
-    await openTask(id);
-  } catch (error) {
-    alert(`Couldn't retry ${id}: ${error.message}`);
-  }
-  button.disabled = false;
-  refresh();
-});
+for (const kind of ["retry", "delete"]) {
+  $(kind).addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    if (!openDead) return;
+    button.disabled = true;
+    const id = openDead.id;
+    if (await deadAction(kind, openDead)) {
+      if (kind === "retry") await openTask(id); // now waiting in its queue
+      else $("task").close();
+    }
+    button.disabled = false;
+  });
+}
 
 $("revoke").addEventListener("click", async (event) => {
   const id = openTaskId;

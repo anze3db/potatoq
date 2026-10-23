@@ -517,6 +517,28 @@ def test_dead_letters_list_and_retry(app, capsys):
     assert result.get(timeout=1) == "ok"
 
 
+def test_dead_letters_delete(app, monkeypatch, capsys):
+    @app.task(name="cli.broken")
+    def broken():
+        raise RuntimeError("never works")
+
+    first, second = broken.delay(), broken.delay()
+    drain(app)
+    monkeypatch.setattr("builtins.input", lambda prompt: "n")
+    assert run(app, "dead", "delete", first.id) == 1
+    assert len(app.broker.dead_letters()) == 2
+
+    prompts = []
+    monkeypatch.setattr("builtins.input", lambda prompt: prompts.append(prompt) or "y")
+    assert run(app, "dead", "delete", first.id) == 0
+    assert [" ".join(p.split()) for p in prompts] == ["delete Delete 1 dead-lettered task for good? [y/N]"]
+    assert said(capsys) == [f"deleted {first.id}"]
+
+    assert run(app, "dead", "delete", "-f", second.id, "missing-id") == 0
+    assert said(capsys) == [f"deleted {second.id}", "missing missing-id isn't in the dead letters"]
+    assert app.broker.dead_letters() == [] and len(prompts) == 1
+
+
 def test_dead_letter_without_reason_or_time(app, monkeypatch, capsys):
     entry = {"id": "abc", "task": "cli.x", "queue": "default", "reason": None, "died_at": None}
     monkeypatch.setattr(app.broker, "dead_letters", lambda limit: [entry])

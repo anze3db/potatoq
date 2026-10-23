@@ -442,6 +442,10 @@ class SQLiteBroker(Broker):
             self._insert(conn, [message])
             return True
 
+    def delete_dead(self, task_id: str) -> bool:
+        with self._write() as conn:
+            return conn.execute("DELETE FROM potatoq_dead WHERE id = ?", (task_id,)).rowcount > 0
+
 
 class _WriteTxn:
     """``BEGIN IMMEDIATE`` ... ``COMMIT`` (taking the write lock up front avoids

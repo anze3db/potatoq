@@ -207,7 +207,7 @@ def test_dead_letters_are_found_without_stored_results():
         app.close()
 
 
-def test_retry_and_revoke(memory_app, tasks):
+def test_retry_delete_and_revoke(memory_app, tasks):
     dashboard = Dashboard(memory_app)
     dead = tasks.charge.delay(1)
     drain(memory_app)
@@ -215,6 +215,16 @@ def test_retry_and_revoke(memory_app, tasks):
     assert memory_app.broker.dead_letters() == [] and memory_app.broker.peek(dead.id) is not None
     assert api(dashboard, f"dead/{dead.id}/retry", "POST", headers=ACTION) == (
         404, {"error": f"{dead.id} isn't in the dead letters"},
+    )  # fmt: skip
+
+    unwanted = tasks.charge.delay(2)
+    drain(memory_app)
+    assert api(dashboard, f"dead/{unwanted.id}/delete", "POST", headers=ACTION) == (200, {"ok": True})
+    # The retried task failed again in that drain; only the deleted one is gone.
+    assert [e["id"] for e in memory_app.broker.dead_letters()] == [dead.id]
+    assert memory_app.broker.peek(unwanted.id) is None
+    assert api(dashboard, f"dead/{unwanted.id}/delete", "POST", headers=ACTION) == (
+        404, {"error": f"{unwanted.id} isn't in the dead letters"},
     )  # fmt: skip
 
     later = tasks.add.apply_async((1, 2), countdown=600)
@@ -237,7 +247,8 @@ def test_actions_need_the_dashboard_header_and_its_origin(memory_app):
 def test_read_only(memory_app):
     dashboard = Dashboard(memory_app, read_only=True)
     assert api(dashboard, "overview")[1]["read_only"] is True
-    assert api(dashboard, "tasks/x/revoke", "POST", headers=ACTION) == (403, {"error": "The dashboard is read-only"})
+    for action in ("tasks/x/revoke", "dead/x/retry", "dead/x/delete"):
+        assert api(dashboard, action, "POST", headers=ACTION) == (403, {"error": "The dashboard is read-only"})
 
 
 def test_unknown_endpoints_and_methods(memory_app):
@@ -401,7 +412,11 @@ def test_every_broker(kind, tmp_path):
         assert api(dashboard, f"tasks/{result.id}")[0] == 200
         assert api(dashboard, f"dead/{result.id}/retry", "POST", headers=ACTION) == (200, {"ok": True})
         assert api(dashboard, "overview")[1]["dead"]["count"] == 0
-        consumer.complete(consumer.fetch(5), None, [])
+        delivery = consumer.fetch(5)
+        consumer.dead_letter(delivery, "RuntimeError: again", None)
+        assert api(dashboard, f"dead/{result.id}/delete", "POST", headers=ACTION) == (200, {"ok": True})
+        assert api(dashboard, "overview")[1]["dead"]["count"] == 0
+        assert consumer.fetch(0.3) is None  # deleted, not requeued
         consumer.close()
     finally:
         app.close()

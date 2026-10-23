@@ -176,7 +176,10 @@ unknown task name, and `Reject(requeue=False)`.
 $ potatoq -A proj dead list
 3534bd8e-…  proj.tasks.charge  queue=default  died=2026-10-08 00:20:27  gateway.Timeout: …
 $ potatoq -A proj dead retry 3534bd8e-07ad-4d58-a9e7-f3eddb5354b1
+$ potatoq -A proj dead delete 3534bd8e-07ad-4d58-a9e7-f3eddb5354b1   # never run it again
 ```
+
+The [dashboard](dashboard.md) has the same Retry and Delete buttons.
 
 Dead letters are kept for `dead_letter_ttl` (30 days), up to `dead_letter_max` (10,000).
 Set `task_dead_letter_failures = False` to discard failed tasks as Celery does.

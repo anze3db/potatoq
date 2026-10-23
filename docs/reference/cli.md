@@ -35,6 +35,7 @@ $ potatoq -A proj schedule
 | `queues [--json]` | Waiting tasks per queue |
 | `dead list [--limit N] [--json]` | Dead-lettered tasks and why they died |
 | `dead retry TASK_ID…` | Put dead-lettered tasks back on their queue |
+| `dead delete TASK_ID… [-f]` | Delete dead-lettered tasks for good (asks first unless `-f`) |
 | `call NAME [-a JSON_ARGS] [-k JSON_KWARGS] [--countdown S] [-Q QUEUE]` | Enqueue by name |
 | `result TASK_ID [--wait SECONDS]` | Show a task's state and result |
 | `revoke TASK_ID…` | Stop waiting tasks from running |
