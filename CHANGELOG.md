@@ -11,10 +11,30 @@ next release. Everything else is generated from pull request titles by
 
 ## Unreleased
 
+## [26.1a9](https://github.com/anze3db/potatoq/releases/tag/26.1a9) - 2026-10-27
+
+### Highlights
+
 - **Dashboard: delete dead letters** that should never run again, with a **Delete**
   button next to **Retry** (both ask for confirmation first), and `potatoq dead delete`
   on the command line. Clicking a dead letter now shows its reason and traceback on
   Redis too, where results aren't stored by default.
+
+### Changes
+
+* Group all Dependabot updates into one monthly PR
+* Dashboard: find dead letters when looking up a task, with Retry in the dialog
+* Delete dead letters from the dashboard and CLI; confirm before retry and delete
+
+<!-- Release notes generated using configuration in .github/release.yml at main -->
+
+
+
+**Full Changelog**: https://github.com/anze3db/potatoq/compare/26.1a8...26.1a9
+
+### Contributors
+
+Thank you to everyone who contributed to this release: @anze3db
 
 ## [26.1a8](https://github.com/anze3db/potatoq/releases/tag/26.1a8) - 2026-10-22
 
